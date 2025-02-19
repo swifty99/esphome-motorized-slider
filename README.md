@@ -81,7 +81,7 @@ The slider needs to be connected according to https://tech.alpsalpine.com/e/prod
 
 # Warning! 
 
-This works with my setup. The controller was insanely difficult to create and adjust. The slider has tons of linear friction. For the force feeback there is no force signal just the noisy position signal. A hardware timer is used with 1ms, as the default loop rate of ESPHome was way too slow.
+This works with my setup. The controller was insanely difficult to create and adjust. The slider has tons of non linear friction. For the force feeback there is no force signal just the noisy position signal. A hardware timer is used with 1ms, as the default loop rate of ESPHome was way too slow.
 Suggestions are welcome, just do not expect this to work right out of the box.
 
 
