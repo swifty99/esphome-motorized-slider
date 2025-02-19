@@ -1,4 +1,4 @@
-# Motorized Slider Component
+# Motorized Slider Component for ESPhome
 
 ## What Does the Component Do?
 
