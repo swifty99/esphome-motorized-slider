@@ -75,7 +75,7 @@ This PWM needs to fed into a H-bridge to control the DC motor of the motorized s
 
 # Warning! 
 
-This works with my setup. The controller was insanely difficult to adjust. The slider has tons of linear friction. For the force feeback there is no force signal just the noisy position signal.
+This works with my setup. The controller was insanely difficult to create and adjust. The slider has tons of linear friction. For the force feeback there is no force signal just the noisy position signal. A hardware timer is used with 1ms, as the default loop rate of ESPHome was way too slow.
 Suggestions are welcome, just do not expect this to work right out of the box.
 
 
