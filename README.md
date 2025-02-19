@@ -55,6 +55,9 @@ output:
     frequency: 19531Hz
 ```
 
+This PWM needs to fed into a H-bridge to control the DC motor of the motorized slider. 5V operating voltage recommended.
+
+---
 
 
 
