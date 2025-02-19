@@ -73,6 +73,10 @@ output:
 
 This PWM needs to fed into a H-bridge to control the DC motor of the motorized slider. 5V operating voltage recommended.
 
+The slider needs to be connected according to https://tech.alpsalpine.com/e/products/detail/RS60N11M9A0E/ as voltage devider.
+3.3V is apllied over the terminals. On + side an additional resistor of 1kOhm is needed.
+
+
 # Warning! 
 
 This works with my setup. The controller was insanely difficult to create and adjust. The slider has tons of linear friction. For the force feeback there is no force signal just the noisy position signal. A hardware timer is used with 1ms, as the default loop rate of ESPHome was way too slow.
