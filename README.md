@@ -1,5 +1,7 @@
 # Motorized Slider Component for ESPHome
 
+![ALPS Slider](images/alps-slider_2.jpg)
+
 ## What Does the Component Do?
 
 The motorized_slider component controls a motorized slider system, which can be used for positioning an element (for example, a slider or detent mechanism) with force‐feedback. It uses PWM outputs to drive the motor, an ADC input to sense position, and a state machine to manage different operating modes. The component supports:
