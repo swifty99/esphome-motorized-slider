@@ -4,7 +4,7 @@
 
 The motorized_slider component controls a motorized slider system, which can be used for positioning an element (for example, a slider or detent mechanism) with force‐feedback. It uses PWM outputs to drive the motor, an ADC input to sense position, and a state machine to manage different operating modes. The component supports:
 
-- **Trajectory Following** – Moves the slider to a target position using a planned motion profile (PID control).
+- **Trajectory Following** – Moves the slider to a target position using a planned motion profile (fast P control).
 - **Force Feedback** – Applies a restoring force when the slider deviates from preset "rastpunkte" (detents), with damping and friction compensation.
 - **Manual Override Detection** – Detects when the user manually moves the slider and temporarily disables force feedback.
 - **Self-Initialization and Calibration** – Automatically performs initialization steps including moving the slider to middle, autotuning filter parameters, and determining friction parameters.
