@@ -75,13 +75,13 @@ output:
 
 This PWM needs to fed into a H-bridge to control the DC motor of the motorized slider. 5V operating voltage recommended.
 
-The slider needs to be connected according to https://tech.alpsalpine.com/e/products/detail/RS60N11M9A0E/ as voltage devider.
-3.3V is apllied over the terminals. On + side an additional resistor of 1kOhm is needed.
+The slider needs to be connected according to [ALPS RS60N11M9 datasheet](https://tech.alpsalpine.com/e/products/detail/RS60N11M9A0E/) as a voltage divider.
+3.3V is applied over the terminals. On + side an additional resistor of 1kOhm is needed.
 
 
 # Warning! 
 
-This works with my setup. The controller was insanely difficult to create and adjust. The slider has tons of non linear friction. For the force feeback there is no force signal just the noisy position signal. A hardware timer is used with 1ms, as the default loop rate of ESPHome was way too slow.
+This works with my setup. The controller was insanely difficult to create and adjust. The slider has a lot of non-linear friction. For the force feedback there is no force signal just the noisy position signal. A hardware timer is used with 1ms, as the default loop rate of ESPHome was way too slow.
 Suggestions are welcome, just do not expect this to work right out of the box.
 
 
@@ -91,44 +91,64 @@ The component is implemented as a C++ class (MotorController) that inherits from
 
 ## Main Functions and Their Roles
 
-setup()
-Configures the ADC (e.g., sets ADC width, attenuation), creates and starts a periodic timer that calls on_timer() at a fixed interval (every 1 ms in this case). It also performs any motor-specific initialization on first boot.
-initialize_motor()
-Implements a sub–state machine (with states such as WAIT_WIFI, MOVE_TO_MIDDLE, AUTOTUNE, DETECT_FRICTION, etc.) to move the motor to a middle position, tune Kalman filter parameters, and determine friction values. This must be completed before normal operation begins.
-Periodic Processing
+## Main Functions and Their Roles
 
-on_timer()
-The core periodic function called by a hardware timer. It:
-Reads the current position (via ADC) and computes the velocity (using a PT1 filter).
-Checks for manual override.
-Implements a state machine with four states:
-INITIALIZE – Waits until the motor is initialized.
-IDLE – Waits when no movement is commanded.
-MOVE2POS – Follows a planned trajectory to move the slider toward a target position using PID control.
-FORCEFEEDBACK – Applies force feedback (via set_force_feedback_torque()) to simulate detents when the slider is not already moving toward the target.
-Delegates to state-specific functions such as updating motor torque or following a trajectory.
-Motion Control and PID
+*   `setup()`
 
-move_to_position(float target_position)
-Uses a PID controller to compute the required torque to move the slider from its current position toward a target position. Implements anti-windup for the integral term.
-follow_trajectory()
-Uses pre–calculated trajectory parameters (from plan_trajectory()) for smooth motion between positions. Returns true when the target is reached.
-Force Feedback
+  Configures the ADC (e.g., sets ADC width, attenuation), creates and starts a periodic timer that calls `on_timer()` at a fixed interval (every 1 ms in this case). It also performs any motor-specific initialization on first boot.
+*   `initialize_motor()`
 
-calculate_rastpunkt_force(bool printlog)
-Determines a restoring force based on the slider’s current position relative to the nearest “rastpunkt” (detent). It takes into account stiffness values defined in the configuration along with a blending factor and applies damping based on current velocity.
-set_force_feedback_torque()
-Applies the calculated force (from calculate_rastpunkt_force()) to the motor by setting the PWM levels on the forward or backward channels.
-Friction Compensation
+  Implements a sub-state machine (with states such as `WAIT_WIFI`, `MOVE_TO_MIDDLE`, `AUTOTUNE`, `DETECT_FRICTION`, etc.) to move the motor to a middle position, tune Kalman filter parameters, and determine friction values. This must be completed before normal operation begins.
 
-calculate_friction()
-Implements a Stribeck–like friction model using defined coefficients. It computes the friction force depending on the current motor velocity, ensuring that friction compensation is balanced across low and high speeds.
-determine_friction()
-Runs an initialization routine that methodically increases torque (both forward and backward) to determine the friction level of the system.
-Manual Override Detection
+### Periodic Processing
 
-check_manual_override() and monitor_manual_movements()
-These functions analyze position and velocity changes (using a history buffer) to detect if the slider is being moved manually. If an override is detected, the state machine in on_timer() transitions to disable trajectory control in favor of force feedback.
-Sensor Integration
+*   `on_timer()`
 
-The component can interface with an external sensor (configured via YAML under slider_position_sensor:) to publish the slider’s position back to Home Assistant.
+  The core periodic function called by a hardware timer. It:
+
+  *   Reads the current position (via ADC) and computes the velocity (using a PT1 filter).
+  *   Checks for manual override.
+  *   Implements a state machine with four states:
+    *   `INITIALIZE` – Waits until the motor is initialized.
+    *   `IDLE` – Waits when no movement is commanded.
+    *   `MOVE2POS` – Follows a planned trajectory to move the slider toward a target position using PID control.
+    *   `FORCEFEEDBACK` – Applies force feedback (via `set_force_feedback_torque()`) to simulate detents when the slider is not already moving toward the target.
+  *   Delegates to state-specific functions such as updating motor torque or following a trajectory.
+
+### Motion Control and PID
+
+*   `move_to_position(float target_position)`
+
+  Uses a PID controller to compute the required torque to move the slider from its current position toward a target position. Implements anti-windup for the integral term.
+*   `follow_trajectory()`
+
+  Uses pre-calculated trajectory parameters (from `plan_trajectory()`) for smooth motion between positions. Returns `true` when the target is reached.
+
+### Force Feedback
+
+*   `calculate_rastpunkt_force(bool printlog)`
+
+  Determines a restoring force based on the slider’s current position relative to the nearest “rastpunkt” (detent). It takes into account stiffness values defined in the configuration along with a blending factor and applies damping based on current velocity.
+*   `set_force_feedback_torque()`
+
+  Applies the calculated force (from `calculate_rastpunkt_force()`) to the motor by setting the PWM levels on the forward or backward channels.
+
+### Friction Compensation
+
+*   `calculate_friction()`
+
+  Implements a Stribeck-like friction model using defined coefficients. It computes the friction force depending on the current motor velocity, ensuring that friction compensation is balanced across low and high speeds.
+*   `determine_friction()`
+
+  Runs an initialization routine that methodically increases torque (both forward and backward) to determine the friction level of the system.
+
+### Manual Override Detection
+
+*   `check_manual_override()` and `monitor_manual_movements()`
+
+  These functions analyze position and velocity changes (using a history buffer) to detect if the slider is being moved manually. If an override is detected, the state machine in `on_timer()` transitions to disable trajectory control in favor of force feedback.
+
+### Sensor Integration
+
+The component can interface with an external sensor (configured via YAML under `slider_position_sensor:`) to publish the slider’s position back to Home Assistant.
+
