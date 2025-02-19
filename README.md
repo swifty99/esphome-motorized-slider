@@ -73,10 +73,13 @@ output:
 
 This PWM needs to fed into a H-bridge to control the DC motor of the motorized slider. 5V operating voltage recommended.
 
+# Warning! 
+
+This works with my setup. The controller was insanely difficult to adjust. The slider has tons of linear friction. For the force feeback there is no force signal just the noisy position signal.
+Suggestions are welcome, just do not expect this to work right out of the box.
+
+
 ---
-
-
-
 
 The component is implemented as a C++ class (MotorController) that inherits from esphome::Component, along with additional interfaces for output control and sensor integration. Its files are split into a header (motorized_slider.h) and source file (motorized_slider.cpp).
 
