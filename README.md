@@ -9,6 +9,22 @@ The motorized_slider component controls a motorized slider system, which can be 
 - **Manual Override Detection** – Detects when the user manually moves the slider and temporarily disables force feedback.
 - **Self-Initialization and Calibration** – Automatically performs initialization steps including moving the slider to middle, autotuning filter parameters, and determining friction parameters.
 
+## Prerequisites
+
+Before using this component, ensure you have the following:
+
+- **ESPHome Installation:** Make sure you have ESPHome set up and running.
+- **ESP32S2 or ESP32S3 Board:** This component is designed for ESP32S2 or ESP32S3 boards.
+- **Espressif IDF:** The Espressif IDF (IoT Development Framework) is required. 
+
+## Motorized Slider Details (ALPS RS60N11M9)
+
+The motorized slider component is designed to work with motorized faders like the ALPS RS60N11M9. This particular fader has the following characteristics:
+
+- **Resistance:** 5 kΩ
+- **Type:** Linear
+- **Motorized:** Includes an integrated DC motor for automated control.
+
 ## Example Configuration
 
 Below is an example YAML configuration for using this component in ESPHome:
