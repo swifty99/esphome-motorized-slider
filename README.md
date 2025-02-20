@@ -89,7 +89,8 @@ Connect the potentiometer like this:
 
 # Warning! 
 
-This works with my setup. The controller was insanely difficult to create and adjust. The slider has a lot of non-linear friction. For the force feedback there is no force signal just the noisy position signal. A hardware timer is used with 1ms, as the default loop rate of ESPHome was way too slow.
+This works with my setup. The controller was insanely difficult to create and adjust. The slider has a lot of non-linear friction. For the force feedback there is no force signal just the noisy position signal. 
+
 Suggestions are welcome, just do not expect this to work right out of the box.
 
 
