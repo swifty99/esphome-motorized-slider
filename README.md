@@ -15,9 +15,10 @@ The motorized_slider component controls a motorized slider system, which can be 
 
 Before using this component, ensure you have the following:
 
-- **ESPHome Installation:** Make sure you have ESPHome set up and running.
-- **ESP32S2 or ESP32S3 Board:** This component is designed for ESP32S2 or ESP32S3 boards.
-- **Espressif IDF:** The Espressif IDF (IoT Development Framework) is required. 
+- **ESP32S2 or ESP32S3 Board:** This component is designed for ESP32S2 or ESP32S3 boards. The ADC needs to be a accurate and fast. ESP32Sx versions seem OK.
+- **Espressif IDF:** The Espressif IDF is required. Arduino is a pain and adds extra HAL layers wich slow things down.
+- **A motorized slider:** Obviously. Alps were the ones available at my testing. A new version came out right after, probobly less fiddly with friction, not tested
+- **H bridge:** To control the motor, the cheap ones around were OK.
 
 ## Motorized Slider Details (e.g. ALPS RS60N11M9)
 
@@ -90,8 +91,6 @@ Connect the potentiometer like this:
 
 This works with my setup. The controller was insanely difficult to create and adjust. The slider has a lot of non-linear friction. For the force feedback there is no force signal just the noisy position signal. A hardware timer is used with 1ms, as the default loop rate of ESPHome was way too slow.
 Suggestions are welcome, just do not expect this to work right out of the box.
-
-Contributions welcome.
 
 
 ---
