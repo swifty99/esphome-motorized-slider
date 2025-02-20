@@ -99,7 +99,6 @@ The component is implemented as a C++ class (MotorController) that inherits from
 
 ## Main Functions and Their Roles
 
-## Main Functions and Their Roles
 
 *   `setup()`
 
