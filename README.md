@@ -81,7 +81,7 @@ The slider needs to be connected according to [ALPS RS60N11M9 datasheet](https:/
 
 # Build your own
 
-Best way is to start with a test setup. You may use the stl file to print a housing for 5cm slider. Insert an ESP32S2, add a cheap H-bridge.
+Best way is to start with a test setup. You may use the stl file to print a housing for a 60mm travel slider like ALPS RS60N11M9. Insert an ESP32S2, add a cheap H-bridge.
 
 Connect the potentiometer like this:
 ![Wiring](images/slider-pot-wiring.png)
