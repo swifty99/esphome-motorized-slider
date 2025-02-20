@@ -77,7 +77,7 @@ output:
 This PWM needs to fed into a H-bridge to control the DC motor of the motorized slider. 5V operating voltage recommended.
 
 The slider needs to be connected according to [ALPS RS60N11M9 datasheet](https://tech.alpsalpine.com/e/products/detail/RS60N11M9A0E/) as a voltage divider.
-3.3V is applied over the terminals. On + side an additional resistor of 1kOhm is needed.
+3.3V is applied over the terminals. On + side an additional resistor of 1kOhm is needed. This keeps the resulting voltage in the ADC voltage pretty well.
 
 # Build your own
 
