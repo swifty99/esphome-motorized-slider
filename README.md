@@ -78,6 +78,11 @@ This PWM needs to fed into a H-bridge to control the DC motor of the motorized s
 The slider needs to be connected according to [ALPS RS60N11M9 datasheet](https://tech.alpsalpine.com/e/products/detail/RS60N11M9A0E/) as a voltage divider.
 3.3V is applied over the terminals. On + side an additional resistor of 1kOhm is needed.
 
+# Build your own
+
+Best way is to start with a test setup. You may use the stl file to print a housing for 5cm slider. Insert an ESP32S2, add a cheap H-bridge.
+
+
 
 # Warning! 
 
