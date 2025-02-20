@@ -82,6 +82,7 @@ The slider needs to be connected according to [ALPS RS60N11M9 datasheet](https:/
 
 Best way is to start with a test setup. You may use the stl file to print a housing for 5cm slider. Insert an ESP32S2, add a cheap H-bridge.
 
+![Wiring](images/slider-pot-wiring.png)
 
 
 # Warning! 
