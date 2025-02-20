@@ -19,7 +19,7 @@ Before using this component, ensure you have the following:
 - **ESP32S2 or ESP32S3 Board:** This component is designed for ESP32S2 or ESP32S3 boards.
 - **Espressif IDF:** The Espressif IDF (IoT Development Framework) is required. 
 
-## Motorized Slider Details (ALPS RS60N11M9)
+## Motorized Slider Details (e.g. ALPS RS60N11M9)
 
 The motorized slider component is designed to work with motorized faders like the ALPS RS60N11M9. This particular fader has the following characteristics:
 
