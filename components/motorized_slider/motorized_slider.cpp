@@ -161,12 +161,44 @@ void MotorController::on_timer() {
 
 
 
+float MotorController::calculate_dither() {
+    if (this->dither_amplitude_ <= 0.001f) {
+        return 0.0f;
+    }
+    
+    if (this->dither_frequency_ < 1) this->dither_frequency_ = 1;
+
+    uint32_t half_period = 500000 / this->dither_frequency_;
+    if (half_period == 0) {
+        return 0.0f;
+    }
+
+    float clamped_idle = this->dither_idle_ratio_;
+    if (clamped_idle < 0.0f) clamped_idle = 0.0f;
+    if (clamped_idle > 0.49f) clamped_idle = 0.49f;
+
+    uint32_t active_duration = static_cast<uint32_t>(half_period * (1.0f - clamped_idle));
+    if (active_duration == 0) {
+        return 0.0f;
+    }
+    
+    uint32_t cycle = micros() % (2 * half_period);
+    bool positive_half = cycle < half_period;
+    uint32_t phase_time = positive_half ? cycle : (cycle - half_period);
+
+    if (phase_time < active_duration) {
+        return positive_half ? this->dither_amplitude_ : -this->dither_amplitude_;
+    }
+
+    return 0.0f;
+}
+
+
 void MotorController::set_force_feedback_torque() {
  
     float torque = calculate_rastpunkt_force(true);
  
-    //set_torque( torque);
-    //return; 
+    torque += this->calculate_dither();
 
     // Set the torque to the motor
     if (torque > 0.0f) {
@@ -237,6 +269,8 @@ void MotorController::set_torque(float torque) {
             friction_state = DIR_CHANGE;
         }
     }
+
+    compensated_torque += this->calculate_dither();
 
     // Set the torque to the motor
     if (compensated_torque > 0.0f) {

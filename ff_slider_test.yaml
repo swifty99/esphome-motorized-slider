@@ -1,0 +1,197 @@
+ 
+substitutions:
+  plug_name: "ff-controller"
+  ip_address: "192.168.178.49"
+  device_name: ${plug_name}
+
+external_components:
+  - source:
+      type: local
+      path: components/
+
+
+packages:
+  device_base: !include device_base.yaml  
+
+esphome:
+  name: ${plug_name}
+
+    # ...
+
+      
+  on_boot:
+    priority: 600
+    # ...
+    then:
+      - output.set_level:
+          id: status_led
+          level: 5%
+          
+esp32:
+  board: lolin_s2_mini
+
+  framework:
+    type: esp-idf
+    #sdkconfig_options:
+    #  CONFIG_ESP_CONSOLE_USB_CDC: y    
+
+
+logger:
+  level: INFO
+  #hardware_uart: USB_CDC
+
+motorized_slider:
+  id: my_motor_controller
+  pwm_forward: motor_2_r
+  pwm_backward: motor_2_l
+  sensor_pin: 9
+  rastpunkte:
+    - position: 0.0
+      stiffness: 0.9
+    - position: 25.0
+      stiffness: 0.9
+    - position: 50.0  
+      stiffness: 1
+    - position: 75.0
+      stiffness: 1
+    - position: 100.0
+      stiffness: 0.9
+  target_position: 42
+  slider_position_sensor:
+    name: "Slider Position"
+    id: slider_position
+    device_class: distance
+    state_class: measurement
+    filters:
+      - or: 
+        - delta: 2
+        - throttle: 100sec
+
+
+
+number:
+  - platform: template
+    name: "Motor 1 position test"
+    id: motor_speed_1
+    optimistic: true
+    min_value: 0
+    max_value: 100
+    initial_value: 50
+    step: 1
+    on_value:
+      then:
+        # use this to test h- bridge of motor_1_r and motor_1_l to set force, 
+        - lambda: |-
+            id(my_motor_controller).set_target_position(x / 100);
+
+  - platform: template
+    name: "Dither Frequency"
+    id: dither_freq
+    optimistic: true
+    min_value: 10
+    max_value: 200
+    step: 1
+    initial_value: 50
+    on_value:
+      then:
+        - lambda: 'id(my_motor_controller).set_dither_frequency((int)x);'
+
+  - platform: template
+    name: "Dither Amplitude"
+    id: dither_amp
+    optimistic: true
+    min_value: 0.0
+    max_value: 0.3
+    step: 0.01
+    initial_value: 0.0
+    on_value:
+      then:
+        - lambda: 'id(my_motor_controller).set_dither_amplitude(x);'
+
+  - platform: template
+    name: "Dither Idle Ratio"
+    id: dither_idle_ratio
+    optimistic: true
+    min_value: 0.0
+    max_value: 0.49
+    step: 0.01
+    initial_value: 0.0
+    on_value:
+      then:
+        - lambda: 'id(my_motor_controller).set_dither_idle_ratio(x);'
+
+
+
+          
+
+
+
+# --------------------- SCRIPT ---------------------------------
+
+
+
+# --------------------- SENSOR  ---------------------------------
+
+
+text_sensor:
+  - <<: !include common/default/wifi_info.yaml     
+
+
+sensor:
+  - <<: !include common/default/uptime_config.yaml    
+  - <<: !include common/default/wifi_sens.yaml    
+
+
+
+
+# --------------------- OUT   ---------------------------------
+
+
+output:
+
+  - platform: slow_pwm
+    pin: GPIO15
+    id: status_led
+    period: 2s    
+
+
+  - platform: ledc
+    pin: GPIO11
+    id: motor_2_r
+    
+    #frequency: 9765Hz
+    #frequency: 4882Hz
+    frequency: 19531Hz
+
+  - platform: ledc
+    pin: GPIO10
+    id: motor_2_l
+    #frequency: 9765Hz
+    #frequency: 4882Hz
+    frequency: 19531Hz
+
+
+  - platform: ledc
+    pin: GPIO12
+    id: motor_1_r
+    frequency: 19531Hz
+
+  - platform: ledc
+    pin: GPIO16
+    id: motor_1_l
+    frequency: 19531Hz
+
+
+# Individual outputs
+switch:
+
+
+  - platform: template
+    name: "Slider 2 Speed controller active"
+    id: slider_2_speedcontroller_active
+    optimistic: true
+    
+
+  - platform: restart
+    name: "${plug_name} Restart"
+

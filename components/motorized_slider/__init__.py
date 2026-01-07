@@ -135,6 +135,9 @@ CONF_TARGET_POSITION = "target_position"
 CONF_SLIDER_POSITION_SENSOR = "slider_position_sensor"
 CONF_POSITION = "position"
 CONF_STIFFNESS = "stiffness"
+CONF_DITHER_FREQUENCY = "dither_frequency"
+CONF_DITHER_AMPLITUDE = "dither_amplitude"
+CONF_DITHER_IDLE_RATIO = "dither_idle_ratio"
 
 RastpunktSchema = cv.Schema({
     cv.Required(CONF_POSITION): cv.All(cv.float_, cv.Range(min=0.0, max=100.0)),
@@ -147,7 +150,10 @@ CONFIG_SCHEMA = cv.Schema({
         cv.Required(CONF_PWM_FORWARD): cv.use_id(output.FloatOutput),
         cv.Required(CONF_PWM_BACKWARD): cv.use_id(output.FloatOutput),
         cv.Optional(CONF_RASTPUNKTE, default=[]): cv.ensure_list(RastpunktSchema),
-        cv.Optional(CONF_TARGET_POSITION, default=0.0): cv.float_,    
+        cv.Optional(CONF_TARGET_POSITION, default=0.0): cv.float_,
+        cv.Optional(CONF_DITHER_FREQUENCY, default=50): cv.int_,
+        cv.Optional(CONF_DITHER_AMPLITUDE, default=0.0): cv.float_,
+        cv.Optional(CONF_DITHER_IDLE_RATIO, default=0.0): cv.All(cv.float_, cv.Range(min=0.0, max=0.49)),
         cv.Optional(CONF_SLIDER_POSITION_SENSOR): sensor.sensor_schema(
             unit_of_measurement="%",
             accuracy_decimals=2,
@@ -171,6 +177,9 @@ async def to_code(config):
     cg.add(var.set_pwm_forward(pwm_forward))
     cg.add(var.set_pwm_backward(pwm_backward))
     cg.add(var.set_target_position(config[CONF_TARGET_POSITION]))
+    cg.add(var.set_dither_frequency(config[CONF_DITHER_FREQUENCY]))
+    cg.add(var.set_dither_amplitude(config[CONF_DITHER_AMPLITUDE]))
+    cg.add(var.set_dither_idle_ratio(config[CONF_DITHER_IDLE_RATIO]))
 
     # add the pin
 

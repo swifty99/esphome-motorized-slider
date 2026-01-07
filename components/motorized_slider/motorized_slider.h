@@ -31,11 +31,19 @@ public:
     void set_feedback_sensor_pin(int feedback_sensor_pin) { feedback_sensor_pin_ = feedback_sensor_pin; }
     void set_target_position(float target_position) ;
     void add_rastpunkt(float position, float stiffness);
-    void set_slider_position_sensor(sensor::Sensor *slider_position_sensor) { slider_position_sensor_ = slider_position_sensor; }
-    void set_adcchannel(adc1_channel_t channel) {
-        this->adc_channel_ = channel;
-      }
-    void on_timer(); // Timer callback function
+        void set_slider_position_sensor(sensor::Sensor *slider_position_sensor) { slider_position_sensor_ = slider_position_sensor; }
+        void set_adcchannel(adc1_channel_t channel) {
+                this->adc_channel_ = channel;
+            }
+        void on_timer(); // Timer callback function
+
+        void set_dither_amplitude(float amplitude) { dither_amplitude_ = amplitude; }
+        void set_dither_frequency(int frequency) { dither_frequency_ = frequency; }
+        void set_dither_idle_ratio(float ratio) {
+                if (ratio < 0.0f) ratio = 0.0f;
+                if (ratio > 0.49f) ratio = 0.49f;
+                dither_idle_ratio_ = ratio;
+        }
 
 protected:
     output::FloatOutput  *pwm_forward_ = nullptr;
@@ -100,6 +108,12 @@ private:
     float friction_motor_backward_ = 0.4024f;
     bool is_initialized_ = false;
     bool friction_determined_ = false;
+
+    // Dither parameters
+    float dither_amplitude_ = 0.0f;
+    int dither_frequency_ = 50;
+    float dither_idle_ratio_ = 0.0f;
+    float calculate_dither();
 
     // Calculation methods
     void calculate_measurement_error();
