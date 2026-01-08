@@ -9,7 +9,7 @@ The motorized_slider component controls a motorized slider system, which can be 
 - **Trajectory Following** – Moves the slider to a target position using a planned motion profile (fast P control).
 - **Force Feedback** – Applies a restoring force when the slider deviates from preset "rastpunkte" (detents), with damping and friction compensation.
 - **Manual Override Detection** – Detects when the user manually moves the slider and temporarily disables force feedback.
-- **Self-Initialization and Calibration** – Automatically performs initialization steps including moving the slider to middle, autotuning filter parameters, and determining friction parameters.
+- **Self-Initialization and Calibration** – Automatically performs initialization steps including moving the slider to endpoints. Autotuning filter parameters, and determining friction parameters not completely implemented.
 
 ## Prerequisites
 
@@ -89,7 +89,8 @@ Connect the potentiometer like this:
 
 # Warning! 
 
-This works with my setup. The controller was insanely difficult to create and adjust. The slider has a lot of non-linear friction. For the force feedback there is no force signal just the noisy position signal. A hardware timer is used with 1ms, as the default loop rate of ESPHome was way too slow.
+This works with my setup. The controller was insanely difficult to create and adjust. The slider has a lot of non-linear friction. For the force feedback there is no force signal just the noisy position signal. 
+
 Suggestions are welcome, just do not expect this to work right out of the box.
 
 
