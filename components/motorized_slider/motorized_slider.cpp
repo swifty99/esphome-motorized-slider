@@ -3,20 +3,14 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/defines.h"
-#include "esphome/components/voltage_sampler/voltage_sampler.h"
 #include "esphome/core/hal.h"
 
-
-#include <esp_adc_cal.h>
-#include "driver/adc.h"
 #include "esp_timer.h"
 
 namespace esphome {
 namespace motorized_slider {
 
 static const char *TAG = "motorized_slider";
-
-const float TORQUE_THRESHOLD = 0.01f;
 
 static void periodic_timer_callback(void* arg) {
     MotorController* motor_controller = static_cast<MotorController*>(arg);
@@ -29,10 +23,36 @@ static void periodic_timer_callback(void* arg) {
 void MotorController::setup() {
     ESP_LOGCONFIG(TAG, "Setting up MotorController...");
 
-        // add the macro to read the analog value from the pin GPIO9 on ESP32S2, attenuation 11dB
+    adc_oneshot_unit_init_cfg_t unit_config = {};
+    unit_config.unit_id = this->adc_unit_;
+    unit_config.ulp_mode = ADC_ULP_MODE_DISABLE;
+#if USE_ESP32_VARIANT_ESP32C3 || USE_ESP32_VARIANT_ESP32C5 || USE_ESP32_VARIANT_ESP32C6 || \
+    USE_ESP32_VARIANT_ESP32C61 || USE_ESP32_VARIANT_ESP32H2
+    unit_config.clk_src = ADC_DIGI_CLK_SRC_DEFAULT;
+#endif
 
-    adc1_config_width(ADC_WIDTH_BIT_13);
-    adc1_config_channel_atten(this->adc_channel_, ADC_ATTEN_DB_12);
+    esp_err_t err = adc_oneshot_new_unit(&unit_config, &this->adc_handle_);
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "ADC unit %d already in use. Remove other ADC components or share the handle.", this->adc_unit_);
+        this->status_set_error();
+        return;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize ADC unit %d: %d", this->adc_unit_, err);
+        this->status_set_error();
+        return;
+    }
+
+    adc_oneshot_chan_cfg_t channel_config = {
+        .atten = this->adc_atten_,
+        .bitwidth = ADC_BITWIDTH_13,
+    };
+
+    err = adc_oneshot_config_channel(this->adc_handle_, this->adc_channel_, &channel_config);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to configure ADC channel %d: %d", this->adc_channel_, err);
+        this->status_set_error();
+        return;
+    }
 
 
     const esp_timer_create_args_t periodic_timer_args = {
@@ -195,126 +215,75 @@ float MotorController::calculate_dither() {
 
 
 void MotorController::set_force_feedback_torque() {
- 
     float torque = calculate_rastpunkt_force(true);
- 
-    torque += this->calculate_dither();
-
-    // Set the torque to the motor
-    if (torque > 0.0f) {
-        pwm_forward_->set_level(torque);
-        pwm_backward_->set_level(0.0f);
-    } else if (torque < 0.0f) {
-        pwm_forward_->set_level(0.0f);
-        pwm_backward_->set_level(-torque);
-    } else {
-        pwm_forward_->set_level(0.0f);
-        pwm_backward_->set_level(0.0f);
-    }
+    this->set_torque(torque);
 }
 
 // set torque to motor
 void MotorController::set_torque(float torque) {
-    // Define an enum for friction states
-    enum FrictionState {
-        NO_FRICTION,
-        VELOCITY_FRICTION_FORWARD,
-        VELOCITY_FRICTION_BACKWARD,
-        TORQUE_FRICTION_FORWARD,
-        TORQUE_FRICTION_BACKWARD,
-        ZERO_FRICTION,
-        RAMP_FRICTION_DONE,
-        RAMP_FRICTION_TO_ZERO_FORWARD,
-        RAMP_FRICTION_TO_ZERO_BACKWARD,
-        DIR_CHANGE
-    };
+    float commanded = clamp(torque, -max_torque_, max_torque_);
+    float friction_offset = 0.0f;
+    float velocity = this->current_velocity_;
+    float abs_velocity = fabsf(velocity);
 
-    float friction = this->calculate_friction();
-    float compensated_torque = 0.0f;
-
-    FrictionState friction_state = NO_FRICTION; // Variable to store the friction state
-
-    if (abs(current_velocity_) > friction_speed_threshold_) {
-        if (current_velocity_ > 0.0f) {
-            compensated_torque = torque + friction;
-            friction_state = VELOCITY_FRICTION_FORWARD;
-        } else {
-            compensated_torque = torque - friction;
-            friction_state = VELOCITY_FRICTION_BACKWARD;
+    if (abs_velocity < this->friction_velocity_threshold_) {
+        if (commanded > this->friction_command_threshold_) {
+            friction_offset = this->friction_motor_forward_;
+        } else if (commanded < -this->friction_command_threshold_) {
+            friction_offset = -this->friction_motor_backward_;
         }
-    } else if (torque != 0.0f) {
-        if (torque > 0.0f) {
-            compensated_torque = torque + friction;
-            friction_state = TORQUE_FRICTION_FORWARD;
-        } else if (torque < 0.0f) {
-            compensated_torque = torque - friction;
-            friction_state = TORQUE_FRICTION_BACKWARD;
-        } else {
-            friction = 0.0f;
-            friction_state = ZERO_FRICTION;
+
+        if (friction_offset != 0.0f && this->friction_deadband_ > 0.0f) {
+            float position_error = 0.0f;
+            if (!this->target_reached_) {
+                position_error = this->expected_position_ - this->current_position_;
+            }
+            float abs_error = fabsf(position_error);
+            float scale = 1.0f;
+            if (this->target_reached_) {
+                scale = 0.0f;
+            } else if (abs_error < this->friction_deadband_) {
+                scale = abs_error / this->friction_deadband_;
+            }
+            friction_offset *= scale;
         }
     } else {
-        if (abs(last_compensated_torque) < TORQUE_THRESHOLD) {
-            compensated_torque = 0.0f;
-            friction_state = RAMP_FRICTION_DONE;
-            motor_idle_ = true;
-        } else if (last_compensated_torque > 0.0f) {
-            compensated_torque = last_compensated_torque - friction_reduction_ramp_ / 1000;
-            friction_state = RAMP_FRICTION_TO_ZERO_FORWARD;
-        } else if (last_compensated_torque < 0.0f) {
-            compensated_torque = last_compensated_torque + friction_reduction_ramp_ / 1000;
-            friction_state = RAMP_FRICTION_TO_ZERO_BACKWARD;
-        } else {
-            compensated_torque = 0.0f;
-            friction_state = DIR_CHANGE;
-        }
+        friction_offset = this->friction_dynamic_gain_ * velocity;
     }
 
-    compensated_torque += this->calculate_dither();
+    float dither = this->calculate_dither();
+    float output = commanded + friction_offset + dither;
+    output = clamp(output, -1.0f, 1.0f);
 
-    // Set the torque to the motor
-    if (compensated_torque > 0.0f) {
-        pwm_forward_->set_level(compensated_torque);
+    if (output > 0.0f) {
+        pwm_forward_->set_level(output);
         pwm_backward_->set_level(0.0f);
-    } else if (compensated_torque < 0.0f) {
+    } else if (output < 0.0f) {
         pwm_forward_->set_level(0.0f);
-        pwm_backward_->set_level(-compensated_torque);
+        pwm_backward_->set_level(-output);
     } else {
         pwm_forward_->set_level(0.0f);
         pwm_backward_->set_level(0.0f);
     }
 
-    last_compensated_torque = compensated_torque;
+    last_compensated_torque = output;
 
     static uint32_t last_log_time = 0;
     uint32_t current_time = millis();
-    if (current_time - last_log_time >= 1000) {
+    if (diagnostic_logging_enabled_ && current_time - last_log_time >= 500) {
         last_log_time = current_time;
-
-        const char* friction_state_names[] = {
-            "No friction",
-            "Velocity friction forward",
-            "Velocity friction backward",
-            "Torque friction forward",
-            "Torque friction backward",
-            "Zero friction",
-            "Ramp friction done",
-            "Ramp friction to zero forward",
-            "Ramp friction to zero backward",
-            "Direction change"
-        };
-        ESP_LOGD(TAG, "TRQ out: %.2f (friction: %.2f), pos: %.2f, Fstate: %s", compensated_torque, friction, current_position_, friction_state_names[friction_state]);
+        ESP_LOGI(TAG, "cmd=%.3f fric=%.3f dith=%.3f out=%.3f vel=%.2f pos=%.2f", commanded, friction_offset, dither, output, velocity, current_position_);
     }
 }
 
 //PID controller to move motor to target position
 void MotorController::move_to_position(float next_position) {
     // PID controller variables
-    float kp = 0.05f;
-    float ki = 0.005f;
-    float kd = 0.00f;
-    float integral = 0.0f;
-    float last_error = 0.0f;
+    float kp = pid_kp_;
+    float ki = pid_ki_;
+    float kd = pid_kd_;
+    static float integral = 0.0f;
+    static float last_error = 0.0f;
     float integral_limit = 10.0f; // Anti-windup limit, based on error not pi
     float last_torque = 0.0f;
 
@@ -331,6 +300,8 @@ void MotorController::move_to_position(float next_position) {
     if (next_position != last_next_position_) {
         last_position_change_time = millis();
         last_next_position_ = next_position;
+        integral = 0.0f;
+        last_error = error;
     }
 
     if (millis() - last_position_change_time > 400) {
@@ -383,31 +354,6 @@ void MotorController::move_to_position(float next_position) {
 
     // Set torque to motor
     this->set_torque(torque);
-}
-
-// calculate friction according to stribeck
-float MotorController::calculate_friction() {
-
-    // all friction values in "motor torqe" which is fed to PWM output 0...1
-    float mu_boundary = 0.62;  // Grenzreibungskoeffizient
-    float mu_min = 0.05;     // Minimaler Reibungskoeffizient im Mischreibungsbereich
-    float transition_velocity = 20.0; // Geschwindigkeit, bei der die Reibung abnimmt
-    float transition_velocity_end = 190.0; // Geschwindigkeit, bei der die Rebiung minimal ist
-    float fluid_coeff = 0.005; // Flüssigkeitsreibungskoeffizient (abhängig von der Viskosität)
-    float velocity = fabs(this->current_velocity_);
-
-    // Grenzreibung: Dominierend bei sehr kleinen Geschwindigkeiten
-    if (velocity < transition_velocity) {
-        return mu_boundary;
-    }
-    // Mischreibung: Dominierend bei mittleren Geschwindigkeiten
-    else if (fabs(this->current_velocity_) < transition_velocity_end) {
-        return mu_min + (mu_boundary - mu_min) * (1.0f - (velocity - transition_velocity) / (transition_velocity_end - transition_velocity));
-    }
-    // Flüssigkeitsreibung: Dominierend bei hohen Geschwindigkeiten
-    else {
-        return mu_min ;
-    }
 }
 
 // detects manual interaction while idle or force feedback
@@ -468,6 +414,10 @@ bool MotorController::monitor_manual_movements() {
 float MotorController::calculate_rastpunkt_force(bool printlog) {
     // Calculates a restoring force to the nearest detent points (rastpunkte).
     // The force is limited by the estimated friction to prevent excessive torque.
+
+    if (!rastpunkte_enabled_ || rastpunkte_.empty()) {
+        return 0.0f;
+    }
 
     float absolute_tolerance = 1.5f; // Absolute tolerance to consider a rastpunkt "reached"
     float current_position = this->get_position(false); // Get unfiltered position
@@ -696,7 +646,17 @@ void MotorController::calculate_measurement_error() {
 
     float mean = sum / num_measurements;
     float variance = (sum_squared / num_measurements) - (mean * mean);
+    if (!std::isfinite(variance) || variance < 0.0f) {
+        variance = 0.0f;
+    }
     this->measurement_error_ = sqrt(variance);
+
+    if (!std::isfinite(this->measurement_error_) || this->measurement_error_ < 1e-4f) {
+        this->measurement_error_ = 1e-4f;
+    }
+
+    this->estimate_error_ = this->measurement_error_;
+    this->kalman_initialized_ = false;
 
     ESP_LOGD(TAG, "Calculated measurement error: %.2f", this->measurement_error_);
 
@@ -820,45 +780,92 @@ void MotorController::initialize_motor() {
 
 // aktuelle Position auslesen
 float MotorController::get_position(bool filtered , bool raw) {
-    // read analog from pin feedback_sensor_pin_
-
-    uint32_t start_time = micros();
-    
-
-    
-    // average 4 samples by adding up the values and dividing by 4
+    if (this->adc_handle_ == nullptr) {
+        ESP_LOGE(TAG, "ADC handle not initialized");
+        return raw ? 0.0f : current_position_;
+    }
 
     int analog_value = 0;
+    int successful_samples = 0;
     for (int i = 0; i < 4; i++) {
-        analog_value += adc1_get_raw(this->adc_channel_);
+        int sample = 0;
+        esp_err_t err = adc_oneshot_read(this->adc_handle_, this->adc_channel_, &sample);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "ADC read failed: %d", err);
+            continue;
+        }
+        analog_value += sample;
+        successful_samples++;
     }
-    analog_value /= 4;
-    
+
+    if (successful_samples == 0) {
+        ESP_LOGE(TAG, "No valid ADC samples available");
+        return raw ? 0.0f : current_position_;
+    }
+
+    analog_value /= successful_samples;
 
     if (raw) {
         return analog_value;
     }
 
     // Convert analog value to position
-    // scale from postion0_raw_value_ to  position100_raw_value_
-    float scaled_position = (float)(analog_value - position0_raw_value_) / (position100_raw_value_ - position0_raw_value_) * 100.0f;
+    // scale from position0_raw_value_ to position100_raw_value_
+    int raw_span = position100_raw_value_ - position0_raw_value_;
+    if (raw_span == 0) {
+        raw_span = 1;
+    }
+    float scaled_position = (float)(analog_value - position0_raw_value_) / (float)raw_span * 100.0f;
     if (scaled_position < 0.0f) {
         scaled_position = 0.0f;
     } else if (scaled_position > 100.0f) {
         scaled_position = 100.0f;
     }
 
-
-    // detect
-
-    // float raw_position = (float)analog_value / 4095.0f * 100.0f;
     float raw_position = scaled_position;
 
-    
-    
-    
-    
-    return raw_position;
+    if (!filtered) {
+        return raw_position;
+    }
+
+    if (!kalman_initialized_) {
+        kalman_estimate_ = raw_position;
+        kalman_initialized_ = true;
+        if (!std::isfinite(measurement_error_) || measurement_error_ < 1e-4f) {
+            measurement_error_ = 1e-4f;
+        }
+        estimate_error_ = measurement_error_;
+        kalman_gain_ = 1.0f;
+        return kalman_estimate_;
+    }
+
+    estimate_error_ += process_noise_;
+    float meas_err = measurement_error_;
+    if (!std::isfinite(meas_err) || meas_err < 1e-6f) {
+        meas_err = 1e-4f;
+    }
+    float denom = estimate_error_ + meas_err;
+    if (denom < 1e-6f) {
+        denom = 1e-6f;
+    }
+    kalman_gain_ = estimate_error_ / denom;
+    kalman_estimate_ = kalman_estimate_ + kalman_gain_ * (raw_position - kalman_estimate_);
+    estimate_error_ = (1.0f - kalman_gain_) * estimate_error_;
+
+    if (!std::isfinite(kalman_estimate_)) {
+        kalman_estimate_ = raw_position;
+        estimate_error_ = meas_err;
+    }
+
+    if (diagnostic_logging_enabled_) {
+        uint32_t now = millis();
+        if (now - last_kalman_log_ >= 500) {
+            last_kalman_log_ = now;
+            ESP_LOGI(TAG, "kalman raw=%.2f filt=%.2f K=%.3f Q=%.5f R=%.3f err=%.4f", raw_position, kalman_estimate_, kalman_gain_, process_noise_, measurement_error_, estimate_error_);
+        }
+    }
+
+    return kalman_estimate_;
 
 
 
@@ -1028,20 +1035,28 @@ bool MotorController::follow_trajectory() {
     // Use the planned trajectory parameters to determine the desired position at the current time.
     float desired_position = 0.0f;
     float direction = (this->trajectory_.target_position > this->trajectory_.start_position) ? 1.0f : -1.0f;
+    const char *phase = "ACC";
+    float commanded_velocity = 0.0f;
 
     // initially we have to pretension the belt
 
     if (elapsed_time < this->trajectory_.t1) {
         // Acceleration phase
         desired_position = this->trajectory_.start_position + direction * 0.5f * this->trajectory_.max_acceleration * elapsed_time * elapsed_time;
+        commanded_velocity = direction * this->trajectory_.max_acceleration * elapsed_time;
     } else if (elapsed_time < this->trajectory_.t2) {
         // Constant velocity phase
         float t = elapsed_time - this->trajectory_.t1;
         desired_position = this->trajectory_.start_position + direction * (this->trajectory_.max_velocity * t + 0.5f * this->trajectory_.max_acceleration * this->trajectory_.t1 * this->trajectory_.t1);
+        phase = "CRU";
+        commanded_velocity = direction * this->trajectory_.max_velocity;
     } else if (elapsed_time < this->trajectory_.t_total) {
         // Deceleration phase
         float t = elapsed_time - this->trajectory_.t_total;
         desired_position = this->trajectory_.target_position - direction * 0.5f * this->trajectory_.max_acceleration * t * t;
+        phase = "DEC";
+        float time_to_stop = this->trajectory_.t_total - elapsed_time;
+        commanded_velocity = direction * this->trajectory_.max_acceleration * time_to_stop;
     } else {
         // Trajectory complete
         desired_position = this->trajectory_.target_position;
@@ -1058,6 +1073,14 @@ bool MotorController::follow_trajectory() {
 
     // Move the motor to the desired position (move_to_position)
     this->move_to_position(desired_position);
+
+    if (diagnostic_logging_enabled_) {
+        static uint32_t last_traj_log = 0;
+        if (current_time - last_traj_log >= 33) {
+            last_traj_log = current_time;
+            ESP_LOGI(TAG, "traj phase=%s t=%.3fs des=%.2f cur=%.2f vel_cmd=%.2f vel_act=%.2f err=%.2f", phase, elapsed_time, desired_position, current_position_, commanded_velocity, current_velocity_, desired_position - current_position_);
+        }
+    }
 
     // Log the desired position and elapsed time for debugging
     //ESP_LOGD(TAG, "Desired position: %.2f, Elapsed time: %.2f", desired_position, elapsed_time);
@@ -1137,11 +1160,17 @@ void MotorController::add_rastpunkt(float position, float stiffness) {
 
 // detects ovveride while move to position
 void MotorController::check_manual_override() {
-    float position_difference = fabs(current_position_ - expected_position_);
-    float velocity_difference = fabs(current_velocity_); // Compare with 0 if motor should be still
-
     static bool override_detected = false;
     static uint32_t override_start_time = 0;
+
+    if (!override_detection_enabled_) {
+        manual_override_ = false;
+        override_detected = false;
+        return;
+    }
+
+    float position_difference = fabs(current_position_ - expected_position_);
+    float velocity_difference = fabs(current_velocity_); // Compare with 0 if motor should be still
 
     // Skip override detection if not initialized or target reached
     if (!is_initialized_ || target_reached_) 
