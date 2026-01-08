@@ -293,7 +293,6 @@ void MotorController::move_to_position(float next_position) {
     // the allowed error is small until we reach the target position
     // if next position has not been changed for 100ms allowed error is 0.8
     // otherwise 0
-    static float allowed_error = 0.0f;
     static uint32_t last_position_change_time = 0;
     static float last_next_position_ = 0.0f;
 
@@ -304,17 +303,16 @@ void MotorController::move_to_position(float next_position) {
         last_error = error;
     }
 
-    if (millis() - last_position_change_time > 400) {
-        allowed_error = 2.0f;
+    uint32_t time_since_change = millis() - last_position_change_time;
+    float allowed_error = 2.0f;
 
+    if (time_since_change > 400 && fabsf(error) <= allowed_error) {
         this->set_torque(0.0f);
         return;
-    } else {
-        allowed_error = 2.0f;
     }
 
 
-    if (abs(error) < allowed_error) {   // stop the motor if the error is less than 0.1
+    if (fabsf(error) < allowed_error) {   // stop the motor if the error is less than 0.1
 
         //this->set_torque(0.0f);
         //return;
@@ -680,6 +678,9 @@ void MotorController::initialize_motor() {
 
         static State state = WAIT_WIFI;
         static uint32_t state_start_time =  0;
+        static int raw_min_value = std::numeric_limits<int>::max();
+        static int raw_max_value = std::numeric_limits<int>::min();
+        static uint32_t last_extreme_update_time = 0;
 
         switch (state) {
             case WAIT_WIFI:
@@ -688,6 +689,9 @@ void MotorController::initialize_motor() {
                     state = MOVE_TO_MIDDLE;
 
                     state_start_time = millis();
+                    raw_min_value = std::numeric_limits<int>::max();
+                    raw_max_value = std::numeric_limits<int>::min();
+                    last_extreme_update_time = millis();
                 }
                 break;
 
@@ -702,8 +706,9 @@ void MotorController::initialize_motor() {
                 } else if (millis() - state_start_time > 3000) { // Timeout after 3 seconds
 
                     this->set_torque(0.0f);
-                    ESP_LOGE(TAG, "Timeout reached while moving to middle position. Current position: %.2f", position);
-                    state = END;
+                    ESP_LOGW(TAG, "Timeout reached while moving to middle position. Current position: %.2f", position);
+                    state = AUTOTUNE;
+                    state_start_time = millis();
                 }
                 break;
 
@@ -730,22 +735,49 @@ void MotorController::initialize_motor() {
 
             case MOVE_TO_100:
                 // Set torque to move to position for 1 second
-                this->set_torque(1.0f);  
-                if (millis() - state_start_time > 1000) { // Wait for 1 second
+                this->set_torque(1.0f);
+                {
+                    int raw_sample = static_cast<int>(get_position(true, true));
+                    if (raw_sample < raw_min_value) {
+                        raw_min_value = raw_sample;
+                        last_extreme_update_time = millis();
+                    }
+                }
+
+                if ((millis() - state_start_time > 4000) ||
+                    ((millis() - last_extreme_update_time) > 500 && fabsf(current_velocity_) < 5.0f)) {
                     this->set_torque(0.0f);
-                    position100_raw_value_ = get_position(true, true); // Set position100_raw_value_ to ADC raw value
+                    if (raw_min_value != std::numeric_limits<int>::max()) {
+                        position100_raw_value_ = raw_min_value;
+                    } else {
+                        position100_raw_value_ = static_cast<int>(get_position(true, true));
+                    }
 
                     state = MOVE_TO_0;
                     state_start_time = millis();
+                    last_extreme_update_time = millis();
                 }
                 break;
 
             case MOVE_TO_0:
                 // Set torque to move to position for 1 second
-                this->set_torque(-1.0f); 
-                if (millis() - state_start_time > 1000) { // Wait for 1 second
+                this->set_torque(-1.0f);
+                {
+                    int raw_sample = static_cast<int>(get_position(true, true));
+                    if (raw_sample > raw_max_value) {
+                        raw_max_value = raw_sample;
+                        last_extreme_update_time = millis();
+                    }
+                }
+
+                if ((millis() - state_start_time > 4000) ||
+                    ((millis() - last_extreme_update_time) > 500 && fabsf(current_velocity_) < 5.0f)) {
                     this->set_torque(0.0f);
-                    position0_raw_value_ = get_position(true, true); // Set position0_raw_value_ to ADC raw value
+                    if (raw_max_value != std::numeric_limits<int>::min()) {
+                        position0_raw_value_ = raw_max_value;
+                    } else {
+                        position0_raw_value_ = static_cast<int>(get_position(true, true));
+                    }
 
                     state = END;
 
