@@ -4,6 +4,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/hal.h"
+#include "esphome/components/shared_adc/shared_adc.h"
 
 #include "esp_timer.h"
 
@@ -23,36 +24,30 @@ static void periodic_timer_callback(void* arg) {
 void MotorController::setup() {
     ESP_LOGCONFIG(TAG, "Setting up MotorController...");
 
-    adc_oneshot_unit_init_cfg_t unit_config = {};
-    unit_config.unit_id = this->adc_unit_;
-    unit_config.ulp_mode = ADC_ULP_MODE_DISABLE;
-#if USE_ESP32_VARIANT_ESP32C3 || USE_ESP32_VARIANT_ESP32C5 || USE_ESP32_VARIANT_ESP32C6 || \
-    USE_ESP32_VARIANT_ESP32C61 || USE_ESP32_VARIANT_ESP32H2
-    unit_config.clk_src = ADC_DIGI_CLK_SRC_DEFAULT;
-#endif
-
-    esp_err_t err = adc_oneshot_new_unit(&unit_config, &this->adc_handle_);
-    if (err == ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "ADC unit %d already in use. Remove other ADC components or share the handle.", this->adc_unit_);
-        this->status_set_error();
-        return;
-    } else if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to initialize ADC unit %d: %d", this->adc_unit_, err);
+    if (this->shared_adc_manager_ == nullptr) {
+        ESP_LOGE(TAG, "Shared ADC manager not configured; MotorController cannot initialize");
+        this->adc_init_failed_ = true;
         this->status_set_error();
         return;
     }
 
-    adc_oneshot_chan_cfg_t channel_config = {
-        .atten = this->adc_atten_,
-        .bitwidth = ADC_BITWIDTH_13,
-    };
-
-    err = adc_oneshot_config_channel(this->adc_handle_, this->adc_channel_, &channel_config);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure ADC channel %d: %d", this->adc_channel_, err);
+    if (!this->shared_adc_manager_->ensure_channel(this->adc_unit_, this->adc_channel_, this->adc_atten_)) {
+        ESP_LOGE(TAG, "Failed to reserve ADC unit %d channel %d via shared manager", static_cast<int>(this->adc_unit_), static_cast<int>(this->adc_channel_));
+        this->adc_init_failed_ = true;
         this->status_set_error();
         return;
     }
+
+    this->adc_handle_ = this->shared_adc_manager_->get_handle(this->adc_unit_);
+    if (this->adc_handle_ == nullptr) {
+        ESP_LOGE(TAG, "Shared ADC manager did not return a handle for unit %d", static_cast<int>(this->adc_unit_));
+        this->adc_init_failed_ = true;
+        this->status_set_error();
+        return;
+    }
+
+    this->adc_init_failed_ = false;
+    this->adc_error_last_log_ = 0;
 
 
     const esp_timer_create_args_t periodic_timer_args = {
@@ -223,32 +218,21 @@ void MotorController::set_force_feedback_torque() {
 void MotorController::set_torque(float torque) {
     float commanded = clamp(torque, -max_torque_, max_torque_);
     float friction_offset = 0.0f;
-    float velocity = this->current_velocity_;
-    float abs_velocity = fabsf(velocity);
+    constexpr float kFrictionCommandThreshold = 0.01f;
 
-    if (abs_velocity < this->friction_velocity_threshold_) {
-        if (commanded > this->friction_command_threshold_) {
-            friction_offset = this->friction_motor_forward_;
-        } else if (commanded < -this->friction_command_threshold_) {
-            friction_offset = -this->friction_motor_backward_;
-        }
+    if (!this->target_reached_ && fabsf(commanded) > kFrictionCommandThreshold) {
+        friction_offset = (commanded > 0.0f) ? this->friction_motor_forward_ : -this->friction_motor_backward_;
 
-        if (friction_offset != 0.0f && this->friction_deadband_ > 0.0f) {
-            float position_error = 0.0f;
-            if (!this->target_reached_) {
-                position_error = this->expected_position_ - this->current_position_;
-            }
-            float abs_error = fabsf(position_error);
-            float scale = 1.0f;
-            if (this->target_reached_) {
-                scale = 0.0f;
-            } else if (abs_error < this->friction_deadband_) {
-                scale = abs_error / this->friction_deadband_;
-            }
-            friction_offset *= scale;
+        const float speed = fabsf(current_velocity_);
+        constexpr float kFrictionFadeStart = 80.0f;
+        constexpr float kFrictionFadeStop = 120.0f;
+
+        if (speed >= kFrictionFadeStop) {
+            friction_offset = 0.0f;
+        } else if (speed > kFrictionFadeStart) {
+            const float blend = 1.0f - (speed - kFrictionFadeStart) / (kFrictionFadeStop - kFrictionFadeStart);
+            friction_offset *= clamp(blend, 0.0f, 1.0f);
         }
-    } else {
-        friction_offset = this->friction_dynamic_gain_ * velocity;
     }
 
     float dither = this->calculate_dither();
@@ -272,7 +256,7 @@ void MotorController::set_torque(float torque) {
     uint32_t current_time = millis();
     if (diagnostic_logging_enabled_ && current_time - last_log_time >= 500) {
         last_log_time = current_time;
-        ESP_LOGI(TAG, "cmd=%.3f fric=%.3f dith=%.3f out=%.3f vel=%.2f pos=%.2f", commanded, friction_offset, dither, output, velocity, current_position_);
+        ESP_LOGI(TAG, "cmd=%.3f fric=%.3f dith=%.3f out=%.3f vel=%.2f pos=%.2f", commanded, friction_offset, dither, output, current_velocity_, current_position_);
     }
 }
 
@@ -281,9 +265,7 @@ void MotorController::move_to_position(float next_position) {
     // PID controller variables
     float kp = pid_kp_;
     float ki = pid_ki_;
-    float kd = pid_kd_;
     static float integral = 0.0f;
-    static float last_error = 0.0f;
     float integral_limit = 10.0f; // Anti-windup limit, based on error not pi
     float last_torque = 0.0f;
 
@@ -300,11 +282,10 @@ void MotorController::move_to_position(float next_position) {
         last_position_change_time = millis();
         last_next_position_ = next_position;
         integral = 0.0f;
-        last_error = error;
     }
 
     uint32_t time_since_change = millis() - last_position_change_time;
-    float allowed_error = 2.0f;
+    float allowed_error = 1.0f;
 
     if (time_since_change > 400 && fabsf(error) <= allowed_error) {
         this->set_torque(0.0f);
@@ -328,12 +309,8 @@ void MotorController::move_to_position(float next_position) {
         integral = -integral_limit;
     }
 
-    // Calculate derivative
-    float derivative = error - last_error;
-    last_error = error;
-
     // Calculate torque
-    float torque = kp * error + ki * integral + kd * derivative;
+    float torque = kp * error + ki * integral;
 
     // Reset integral if direction changes
     if ((torque > 0 && last_torque < 0) || (torque < 0 && last_torque > 0)) {
@@ -816,12 +793,16 @@ float MotorController::get_position(bool filtered , bool raw) {
         ESP_LOGE(TAG, "ADC handle not initialized");
         return raw ? 0.0f : current_position_;
     }
+    if (this->shared_adc_manager_ == nullptr) {
+        ESP_LOGE(TAG, "Shared ADC manager unavailable for readings");
+        return raw ? 0.0f : current_position_;
+    }
 
     int analog_value = 0;
     int successful_samples = 0;
     for (int i = 0; i < 4; i++) {
         int sample = 0;
-        esp_err_t err = adc_oneshot_read(this->adc_handle_, this->adc_channel_, &sample);
+        esp_err_t err = this->shared_adc_manager_->read_raw(this->adc_unit_, this->adc_channel_, &sample);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "ADC read failed: %d", err);
             continue;
@@ -1150,16 +1131,23 @@ void MotorController::set_target_position(float position) {
 
 
 void MotorController::loop() {
-    // Main loop code
-    
+    uint32_t now = millis();
 
+    if (this->adc_init_failed_) {
+        if (this->adc_error_last_log_ == 0 || now - this->adc_error_last_log_ >= 5000) {
+            this->adc_error_last_log_ = (now == 0) ? 1 : now;
+            ESP_LOGE(TAG, "MotorController not running: ADC unit %d channel %d already taken. Disable other ADC components or share the handle.",
+                     static_cast<int>(this->adc_unit_), static_cast<int>(this->adc_channel_));
+        }
+        return;
+    }
+
+    // Main loop code
 
 
     // Alle 2 Sekunden per log die Geschwindigkeit ud Position ausgeben
     static uint32_t last_log = 0;
     static uint32_t last_slider_publish_ = 0;
-
-    uint32_t now = millis();
     
     //ESP_LOGD(TAG, "Current time: %u, Last log time: %u", now, last_log);
     if (now - last_log > 2000) {
@@ -1192,14 +1180,12 @@ void MotorController::add_rastpunkt(float position, float stiffness) {
 
 // detects ovveride while move to position
 void MotorController::check_manual_override() {
+    constexpr float kOverridePositionThreshold = 9.0f;
+    constexpr float kOverrideVelocityThreshold = 170.0f;
+    constexpr uint32_t kOverrideDebounceMs = 400;
+
     static bool override_detected = false;
     static uint32_t override_start_time = 0;
-
-    if (!override_detection_enabled_) {
-        manual_override_ = false;
-        override_detected = false;
-        return;
-    }
 
     float position_difference = fabs(current_position_ - expected_position_);
     float velocity_difference = fabs(current_velocity_); // Compare with 0 if motor should be still
@@ -1208,19 +1194,19 @@ void MotorController::check_manual_override() {
     if (!is_initialized_ || target_reached_) 
     {
         override_detected = false;
+        manual_override_ = false;
         return;
         
     }
 
-    if (position_difference > override_position_threshold_ ||
-        velocity_difference > override_velocity_threshold_) {
+    if (position_difference > kOverridePositionThreshold ||
+        velocity_difference > kOverrideVelocityThreshold) {
         if (!override_detected) {
             override_detected = true;
             override_start_time = millis();
-        } else if (millis() - override_start_time > override_debounce_time_) {
+        } else if (millis() - override_start_time > kOverrideDebounceMs) {
             // Manual override detected
             manual_override_ = true;
-            last_override_time_ = millis();
             // no need to detect again here, we are already in manual override
             target_reached_ = true;
             ESP_LOGW(TAG, "Manual override detected! Position diff: %.2f, Velocity: %.2f", position_difference, current_velocity_);

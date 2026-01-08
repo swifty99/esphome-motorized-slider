@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import  output, sensor
+from esphome.components import output, sensor, shared_adc
 from esphome import pins
 from esphome.const import (
     CONF_ID,
@@ -24,7 +24,8 @@ from esphome.components.esp32.const import (
 
 CODEOWNERS = ["@swifty99"]
 
-DEPENDENCIES = []
+DEPENDENCIES = ["shared_adc"]
+MULTI_CONF = True
 
 adc_channel_t = cg.global_ns.enum("adc_channel_t")
 adc_unit_t = cg.global_ns.enum("adc_unit_t")
@@ -139,21 +140,13 @@ CONF_STIFFNESS = "stiffness"
 CONF_DITHER_FREQUENCY = "dither_frequency"
 CONF_DITHER_AMPLITUDE = "dither_amplitude"
 CONF_DITHER_IDLE_RATIO = "dither_idle_ratio"
+CONF_SHARED_ADC = "shared_adc"
 CONF_STATIC_FRICTION_FORWARD = "static_friction_forward"
 CONF_STATIC_FRICTION_BACKWARD = "static_friction_backward"
-CONF_FRICTION_VELOCITY_THRESHOLD = "friction_velocity_threshold"
-CONF_FRICTION_DYNAMIC_GAIN = "friction_dynamic_gain"
-CONF_FRICTION_COMMAND_THRESHOLD = "friction_command_threshold"
-CONF_OVERRIDE_POSITION_THRESHOLD = "override_position_threshold"
-CONF_OVERRIDE_VELOCITY_THRESHOLD = "override_velocity_threshold"
-CONF_OVERRIDE_DEBOUNCE_TIME = "override_debounce_time"
-CONF_MANUAL_OVERRIDE_DETECTION = "manual_override_detection"
 CONF_DIAGNOSTIC_LOGGING = "diagnostic_logging"
 CONF_PROCESS_NOISE = "process_noise"
-CONF_FRICTION_DEADBAND = "friction_deadband"
 CONF_PID_KP = "pid_kp"
 CONF_PID_KI = "pid_ki"
-CONF_PID_KD = "pid_kd"
 CONF_RASTPUNKTE_ENABLED = "rastpunkte_enabled"
 
 RastpunktSchema = cv.Schema({
@@ -168,24 +161,15 @@ CONFIG_SCHEMA = cv.Schema({
         cv.Required(CONF_PWM_BACKWARD): cv.use_id(output.FloatOutput),
         cv.Optional(CONF_RASTPUNKTE, default=[]): cv.ensure_list(RastpunktSchema),
         cv.Optional(CONF_TARGET_POSITION, default=0.0): cv.float_,
-        cv.Optional(CONF_DITHER_FREQUENCY, default=50): cv.int_,
-        cv.Optional(CONF_DITHER_AMPLITUDE, default=0.0): cv.float_,
-        cv.Optional(CONF_DITHER_IDLE_RATIO, default=0.0): cv.All(cv.float_, cv.Range(min=0.0, max=0.49)),
-        cv.Optional(CONF_STATIC_FRICTION_FORWARD, default=0.35): cv.All(cv.float_, cv.Range(min=0.0, max=1.0)),
-        cv.Optional(CONF_STATIC_FRICTION_BACKWARD, default=0.35): cv.All(cv.float_, cv.Range(min=0.0, max=1.0)),
-        cv.Optional(CONF_FRICTION_VELOCITY_THRESHOLD, default=12.0): cv.All(cv.float_, cv.Range(min=0.0, max=200.0)),
-        cv.Optional(CONF_FRICTION_DYNAMIC_GAIN, default=0.0005): cv.All(cv.float_, cv.Range(min=0.0, max=0.01)),
-        cv.Optional(CONF_FRICTION_COMMAND_THRESHOLD, default=0.02): cv.All(cv.float_, cv.Range(min=0.0, max=0.5)),
-        cv.Optional(CONF_FRICTION_DEADBAND, default=2.0): cv.All(cv.float_, cv.Range(min=0.0, max=20.0)),
-        cv.Optional(CONF_OVERRIDE_POSITION_THRESHOLD, default=5.0): cv.All(cv.float_, cv.Range(min=0.0, max=50.0)),
-        cv.Optional(CONF_OVERRIDE_VELOCITY_THRESHOLD, default=70.0): cv.All(cv.float_, cv.Range(min=0.0, max=500.0)),
-        cv.Optional(CONF_OVERRIDE_DEBOUNCE_TIME, default=200): cv.All(cv.int_, cv.Range(min=0, max=5000)),
-        cv.Optional(CONF_MANUAL_OVERRIDE_DETECTION, default=True): cv.boolean,
+        cv.Optional(CONF_DITHER_FREQUENCY, default=79): cv.int_,
+        cv.Optional(CONF_DITHER_AMPLITUDE, default=0.08): cv.float_,
+        cv.Optional(CONF_DITHER_IDLE_RATIO, default=0.09): cv.All(cv.float_, cv.Range(min=0.0, max=0.49)),
+        cv.Optional(CONF_STATIC_FRICTION_FORWARD, default=0.33): cv.All(cv.float_, cv.Range(min=0.0, max=1.0)),
+        cv.Optional(CONF_STATIC_FRICTION_BACKWARD, default=0.36): cv.All(cv.float_, cv.Range(min=0.0, max=1.0)),
         cv.Optional(CONF_DIAGNOSTIC_LOGGING, default=False): cv.boolean,
-        cv.Optional(CONF_PROCESS_NOISE, default=0.01): cv.All(cv.float_, cv.Range(min=0.0, max=0.1)),
-        cv.Optional(CONF_PID_KP, default=0.05): cv.float_,
-        cv.Optional(CONF_PID_KI, default=0.005): cv.float_,
-        cv.Optional(CONF_PID_KD, default=0.0): cv.float_,
+        cv.Optional(CONF_PROCESS_NOISE, default=0.0085): cv.All(cv.float_, cv.Range(min=0.0, max=0.1)),
+        cv.Optional(CONF_PID_KP, default=0.04): cv.float_,
+        cv.Optional(CONF_PID_KI, default=0.01): cv.float_,
         cv.Optional(CONF_RASTPUNKTE_ENABLED, default=True): cv.boolean,
         cv.Optional(CONF_SLIDER_POSITION_SENSOR): sensor.sensor_schema(
             unit_of_measurement="%",
@@ -193,6 +177,7 @@ CONFIG_SCHEMA = cv.Schema({
             )
     }).extend(cv.COMPONENT_SCHEMA.extend({
         cv.Required(CONF_FEEDBACK_SENSOR): validate_adc_pin,
+        cv.Required(CONF_SHARED_ADC): cv.use_id(shared_adc.SharedAdcManager),
         }
     ))
         
@@ -215,19 +200,10 @@ async def to_code(config):
     cg.add(var.set_dither_idle_ratio(config[CONF_DITHER_IDLE_RATIO]))
     cg.add(var.set_static_friction_forward(config[CONF_STATIC_FRICTION_FORWARD]))
     cg.add(var.set_static_friction_backward(config[CONF_STATIC_FRICTION_BACKWARD]))
-    cg.add(var.set_friction_velocity_threshold(config[CONF_FRICTION_VELOCITY_THRESHOLD]))
-    cg.add(var.set_friction_dynamic_gain(config[CONF_FRICTION_DYNAMIC_GAIN]))
-    cg.add(var.set_friction_command_threshold(config[CONF_FRICTION_COMMAND_THRESHOLD]))
-    cg.add(var.set_friction_deadband(config[CONF_FRICTION_DEADBAND]))
-    cg.add(var.set_override_position_threshold(config[CONF_OVERRIDE_POSITION_THRESHOLD]))
-    cg.add(var.set_override_velocity_threshold(config[CONF_OVERRIDE_VELOCITY_THRESHOLD]))
-    cg.add(var.set_override_debounce_time(config[CONF_OVERRIDE_DEBOUNCE_TIME]))
-    cg.add(var.set_override_detection(config[CONF_MANUAL_OVERRIDE_DETECTION]))
     cg.add(var.set_diagnostic_logging(config[CONF_DIAGNOSTIC_LOGGING]))
     cg.add(var.set_process_noise(config[CONF_PROCESS_NOISE]))
     cg.add(var.set_pid_kp(config[CONF_PID_KP]))
     cg.add(var.set_pid_ki(config[CONF_PID_KI]))
-    cg.add(var.set_pid_kd(config[CONF_PID_KD]))
     cg.add(var.set_rastpunkte_enabled(config[CONF_RASTPUNKTE_ENABLED]))
 
     # add the pin
@@ -236,6 +212,8 @@ async def to_code(config):
     pin_num = config[CONF_FEEDBACK_SENSOR][CONF_NUMBER]
     chan = ESP32_VARIANT_ADC1_PIN_TO_CHANNEL[variant][pin_num]
     cg.add(var.set_adc_channel(adc_unit_t.ADC_UNIT_1, chan))
+    manager = await cg.get_variable(config[CONF_SHARED_ADC])
+    cg.add(var.set_shared_adc(manager))
 
     # Add rastpunkte
     for rastpunkt in config[CONF_RASTPUNKTE]:

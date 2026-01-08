@@ -17,6 +17,9 @@
 static void s_timer_intr();
 
 namespace esphome {
+namespace shared_adc {
+class SharedAdcManager;
+}
 namespace motorized_slider {
 
 // Klasse für den MotorController
@@ -35,6 +38,7 @@ public:
         this->adc_unit_ = unit;
         this->adc_channel_ = channel;
     }
+    void set_shared_adc(shared_adc::SharedAdcManager *manager) { this->shared_adc_manager_ = manager; }
     void on_timer(); // Timer callback function
 
     void set_dither_amplitude(float amplitude) { dither_amplitude_ = amplitude; }
@@ -46,17 +50,6 @@ public:
     }
     void set_static_friction_forward(float value) { friction_motor_forward_ = value; }
     void set_static_friction_backward(float value) { friction_motor_backward_ = value; }
-    void set_friction_velocity_threshold(float value) { friction_velocity_threshold_ = value; }
-    void set_friction_dynamic_gain(float value) { friction_dynamic_gain_ = value; }
-    void set_friction_command_threshold(float value) { friction_command_threshold_ = value; }
-    void set_friction_deadband(float value) {
-        if (value < 0.0f) value = 0.0f;
-        friction_deadband_ = value;
-    }
-    void set_override_position_threshold(float value) { override_position_threshold_ = value; }
-    void set_override_velocity_threshold(float value) { override_velocity_threshold_ = value; }
-    void set_override_debounce_time(uint32_t value) { override_debounce_time_ = value; }
-    void set_override_detection(bool enabled) { override_detection_enabled_ = enabled; }
     void set_diagnostic_logging(bool enabled) { diagnostic_logging_enabled_ = enabled; }
     void set_process_noise(float value) {
         if (value < 0.0f) value = 0.0f;
@@ -64,7 +57,6 @@ public:
     }
     void set_pid_kp(float value) { pid_kp_ = value; }
     void set_pid_ki(float value) { pid_ki_ = value; }
-    void set_pid_kd(float value) { pid_kd_ = value; }
     void set_rastpunkte_enabled(bool enabled) { rastpunkte_enabled_ = enabled; }
 
 protected:
@@ -75,6 +67,7 @@ protected:
     adc_channel_t adc_channel_{ADC_CHANNEL_0};
     adc_atten_t adc_atten_{ADC_ATTEN_DB_12};
     adc_oneshot_unit_handle_t adc_handle_{nullptr};
+    shared_adc::SharedAdcManager *shared_adc_manager_{nullptr};
     float target_position_ = 0.0f;
     float current_position_ = 0.0f;
     float current_velocity_ = 0.0f;
@@ -83,8 +76,8 @@ protected:
     float kalman_gain_ = 0.0f;
     bool kalman_initialized_ = false;
     
-    float max_slider_speed_ = 50.0f; //value 50 go left to right in 2 seconds
-    float max_slider_acceleration_ = 600.0f; //value 300 go left to right in 2 seconds
+    float max_slider_speed_ = 150.0f; //value 50 go left to right in 2 seconds
+    float max_slider_acceleration_ = 200.0f; //value 300 go left to right in 2 seconds
     
     float last_compensated_torque = 0.0f;
     bool motor_idle_ = true;
@@ -116,27 +109,25 @@ private:
     const int timer_period_ = 1000;          // 1ms
     const float timer_period_sec_ = 1000000.0f / (float)timer_period_; // 1ms
     bool target_reached_ = false;
+    bool adc_init_failed_ = false;
+    uint32_t adc_error_last_log_ = 0;
 
     // Kalman filter parameters
-    float process_noise_ = 0.01f;
+    float process_noise_ = 0.0085f;
     float measurement_error_ = 0.02f;
     float slope_speed_ = 0.0f;
     uint32_t last_kalman_log_ = 0;
 
     // Friction data
-    float friction_motor_forward_ = 0.424f;
-    float friction_motor_backward_ = 0.4024f;
-    float friction_velocity_threshold_ = 12.0f;
-    float friction_dynamic_gain_ = 0.0005f;
-    float friction_command_threshold_ = 0.02f;
-    float friction_deadband_ = 2.0f;
+    float friction_motor_forward_ = 0.33f;
+    float friction_motor_backward_ = 0.36f;
     bool is_initialized_ = false;
     bool friction_determined_ = true;
 
     // Dither parameters
-    float dither_amplitude_ = 0.0f;
-    int dither_frequency_ = 50;
-    float dither_idle_ratio_ = 0.0f;
+    float dither_amplitude_ = 0.08f;
+    int dither_frequency_ = 79;
+    float dither_idle_ratio_ = 0.09f;
     float calculate_dither();
 
     // Calculation methods
@@ -147,17 +138,11 @@ private:
     // Override detection
     float expected_position_ = 0.0f;
     bool manual_override_ = false;
-    uint32_t last_override_time_ = 0;
-    uint32_t override_debounce_time_ = 200;
-    float override_position_threshold_ = 5.0f;
-    float override_velocity_threshold_ = 70.0f;
-    bool override_detection_enabled_ = true;
     bool diagnostic_logging_enabled_ = false;
     bool rastpunkte_enabled_ = true;
 
-    float pid_kp_ = 0.05f;
-    float pid_ki_ = 0.005f;
-    float pid_kd_ = 0.0f;
+    float pid_kp_ = 0.04f;
+    float pid_ki_ = 0.01f;
     void check_manual_override();
     bool monitor_manual_movements();
 
