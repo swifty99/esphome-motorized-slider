@@ -125,3 +125,4 @@
   3. Kinetic friction tiny once flying: 180-211 %/s at 0.7, overshoot into the end zone every time.
 - Rig end state: player idle, position 66.8 %, no reboot all block. Scope: still off USB
   (checked once at block start per rule — VID 0x0CE9 absent).
+- 2026-07-16 23:57 `58_breakaway_grid.csv`: Block 2 M4: breakaway grid pos 10, both dirs x2, VM 5.00 V
