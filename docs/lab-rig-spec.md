@@ -21,19 +21,23 @@ ADC oneshot, 13-bit, N=4 averaged samples per tick — but the recorder stores t
 samples for noise work in M1/M2. All filtering happens offline; the lab rig must
 never pre-shape the data it exists to characterize.
 
-### R3 — Drive with selectable decay mode (DRV8833 confirmed)
-AIN1 = GPIO11 (forward drive side, legacy `motor_2_r`), AIN2 = GPIO10, LEDC
-19531 Hz, duty resolution ≥10 bit. Torque command in [−1, 1] + mode maps to the two
-LEDC duties:
+### R3 — Drive with selectable decay mode (H-bridge = **L9110** — Jans Korrektur 2026-07-16; vorher fälschlich DRV8833)
+IA = GPIO11 (forward drive side, legacy `motor_2_r`), IB = GPIO10, LEDC
+19531 Hz, duty resolution ≥10 bit. The L9110 has **no coast state and no current
+limit**. Both firmware modes are brake-type (slow) decay — they differ only in
+which rail freewheels during the PWM off-phase. Torque command in [−1, 1] + mode
+maps to the two LEDC duties:
 
-| Mode | Forward (d>0) | Reverse (d<0) | Off-phase |
+| Mode (firmware name, historic) | Forward (d>0) | Reverse (d<0) | Off-phase |
 |---|---|---|---|
-| FAST (legacy-style) | AIN1=PWM(d), AIN2=0 | AIN2=PWM(−d), AIN1=0 | coast (Hi-Z, body diodes) |
-| SLOW | AIN1=100 %, AIN2=PWM(1−d) | AIN2=100 %, AIN1=PWM(1+d) | brake (both low-side FETs) |
+| „FAST" | IA=PWM(d), IB=0 | IB=PWM(−d), IA=0 | both outputs low → **brake-low = slow decay!** |
+| „SLOW" | IA=100 %, IB=PWM(1−d) | IB=100 %, IA=PWM(1+d) | both outputs high → **brake-high** |
 
-Mode selectable per experiment. Bonus if the AISEN shunt gets installed (see
-probe-connections.md): with R=0.2 Ω the DRV8833's 200 mV ITRIP chops at ~1 A —
-a passive hardware current limit above the expected ~0.5 A stall; noted, not relied on.
+The mode names are kept for firmware continuity but are misnomers: this bridge
+offers no fast-decay/coast option. Current sensing: the L9110 has no sense pins —
+the shunt sits in the module's GND return (0.2 Ω, full bridge current, see
+probe-connections.md). There is **no hardware current chop**; the R4 interlocks
+are the only protection (L9110 ~800 mA continuous).
 
 ### R4 — Safety interlocks (non-negotiable, enforced in the tick, not in the player)
 - End-zone cut: |torque| forced 0 outside position [3, 97] % unless the running

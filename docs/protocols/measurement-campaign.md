@@ -63,6 +63,12 @@ means for every later experiment — that's why M2 is early.
 
 ## M3 — Torque vs duty linearity, per decay mode (45 min, wants the shunt)
 
+> **L9110-Korrektur (2026-07-16):** die Brücke ist ein L9110 — kein Coast-Zustand.
+> Beide Firmware-Modi sind Brake-(Slow-)Decay (brake-low vs. brake-high, siehe
+> lab-rig-spec R3). Die Discontinuous-Conduction-Sorge unten trifft damit kaum zu;
+> M3 vergleicht trotzdem beide Modi (unterschiedlicher Freilaufpfad → ggf.
+> unterschiedliche I(duty)-Kennlinie).
+
 **Purpose:** with coast (fast) decay a small DC motor at 19.5 kHz runs in discontinuous
 conduction at low duty → torque ≈ duty², exactly where fine control happens. Slow decay
 linearizes. Quantify, then pick the drive mode.

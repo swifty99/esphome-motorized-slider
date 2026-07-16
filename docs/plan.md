@@ -13,6 +13,14 @@ A motorized-fader servo that is:
 3. **Silent at rest** — PWM hard-off when idle/settled (audio equipment).
 4. **Touchable** — manual grab detected fast, motor releases immediately,
    force-feedback detents (Rastpunkte) feel like detents, not like a fight.
+5. **Self-identifying** — „the ladder has one more step: get the parameters for
+   model and control **on device**. each slider is different. (i have more and
+   different)" (Jan, 2026-07-16). Every unit identifies its own model/controller
+   parameters itself — no scope, no host, bounded time — and stores them per
+   exemplar (NVS). Scope-bound measurements (spikes, coupling, INL) are
+   design-time knowledge; production auto-ident must not need them. Deliverable:
+   `docs/auto-ident-spec.md` — per parameter: bench method vs. on-device method
+   vs. storage.
 
 ## Non-goals (v1)
 
@@ -76,6 +84,9 @@ stated tolerance — parameters are real, not decorative.
   validated against recorded runs (overlay plots committed to `docs/findings/`).
 - Observer prototype tuned on *recorded* data; velocity validated against offline
   zero-phase differentiation as ground truth.
+- Auto-ident spec draft (`docs/auto-ident-spec.md`): for every fitted parameter,
+  prefer identification procedures a device can run on itself (breakaway ramp,
+  impulse ladder, step fits from the on-board recorder) over scope-bound ones.
 - Controller prototype tuned in sim: cascade FF+PID, impulse endgame,
   backlash-aware approach, override handling.
 **Gate:** sim meets the acceptance metrics below; observer velocity RMS error and lag
@@ -142,19 +153,23 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 
 ## Answered (2026-07-16)
 
-1. H-bridge: **DRV8833** → decay recipes fixed in lab-rig-spec R3 (slow decay =
-   drive pin 100 %, other pin PWM(1−d)).
+1. H-bridge: ~~DRV8833~~ → **L9110** (Jans Korrektur an der Bench, 2026-07-16
+   abends). Kein Coast-Zustand, kein Strom-Limit/ITRIP. Firmware-„FAST" =
+   brake-low (= slow decay!), „SLOW" = brake-high — Rezepte korrigiert in
+   lab-rig-spec R3.
 2. Board: **ESP32-S2 Mini** (2 MB PSRAM) → recorder buffer in PSRAM.
 3. Scope: **PicoScope 3203D** (2 ch + EXT + AWG) with the automation toolkit in
    `/Users/jan/dev/repos/pico-bench` (Rosetta x86 venv, block capture proven).
-   Connection plan: `docs/protocols/probe-connections.md`. Shunt proposal changed
-   to **0.2 Ω at the DRV8833 AISEN pin** (single-ended, no channel cost).
+   Connection plan: `docs/protocols/probe-connections.md`. Shunt as built:
+   **0.2 Ω in der GND-Rückleitung des L9110-Moduls** (führt den gesamten
+   Brückenstrom, single-ended; der L9110 hat keine Sense-Pins).
 
 ## Open questions for Jan
 
-1. ~~Shunt-Position~~ → Jan bestätigt 2026-07-16: **AISEN, 0.20 Ω** — wie
-   vorgeschlagen (single-ended vs GND, ITRIP-Chop ~1 A als passiver Schutz).
-   M3/M6-Rezepte gelten unverändert.
+1. ~~Shunt-Position~~ → final (2026-07-16, nach L9110-Korrektur): **0.2 Ω in der
+   GND-Rückleitung des Moduls** (GND—Shunt—GND-Brücke), single-ended vs TP-GND.
+   Kein ITRIP-Schutz (existiert am L9110 nicht) — Interlocks der Firmware sind
+   der einzige Stromschutz. M3/M6 messen den Gesamt-Brückenstrom.
 2. Is **force feedback / Rastpunkte** a v1 requirement, or is smooth positioning the
    priority and FF comes as v1.1? (Affects Phase 4 spec scope, not Phases 1–3.)
 
@@ -163,9 +178,9 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 | Phase | Status | Notes |
 |---|---|---|
 | 0 Scaffold | ✅ done | commit 2612d29 |
-| 1 Lab rig | ✅ bis auf Scope-Alignment | v3 geflasht+verifiziert (9c1928c): 52k Intervalle 0 strukturelle Gaps, max Jitter 115µs, Dump 3.5s abort-fest; tickhealth PASS (6d13e31); fehlt nur EXT-Trigger-Alignment = Minute 1 von Bench-Session 1 |
-| 2 Measurements | ⬜ | needs Phase 1 + rig session with Jan |
-| 3 Offline design | ⬜ | |
+| 1 Lab rig | ✅ bis auf Scope-Alignment | v3 geflasht+verifiziert (9c1928c): 52k Intervalle 0 strukturelle Gaps, max Jitter 115µs, Dump 3.5s abort-fest; tickhealth PASS (6d13e31); Alignment-Gate = erster Block der Nacht-Session 2026-07-16→17 |
+| 2 Measurements | 🔶 läuft | autonome Nacht-Kampagne 2026-07-16→17 (Handover: docs/handover-night-2026-07-16.md); Nacht-Zuschnitt: A=Wiper/B=Shunt fest, M4/M7 nach goto-Fix, M8 nur objektiver Teil |
+| 3 Offline design | 🔶 startet mit M3-Daten | modeler offline; Deliverables plant-model.md + auto-ident-spec.md (Draft) |
 | 4 Controller spec | ⬜ | approval gate |
 | 5 Implementation + SIL | ⬜ | |
 | 6 HIL verification | ⬜ | flash gate |

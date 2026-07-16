@@ -15,22 +15,21 @@ clip archaeology:
 | TP-GND | ground star point | at the pot's GND terminal; **all** scope ground clips land here, nowhere else |
 | TP-WIPER | pot wiper = GPIO9 | the feedback signal |
 | TP-3V3 | 3.3 V rail | noise reference for M1 |
-| TP-PWM-A | GPIO11 / DRV8833 AIN1 | forward drive side |
-| TP-PWM-B | GPIO10 / DRV8833 AIN2 | needed for slow-decay work |
+| TP-PWM-A | GPIO11 / L9110 IA | forward drive side |
+| TP-PWM-B | GPIO10 / L9110 IB | needed for decay-mode work |
 | TP-SYNC | GPIO14 (Jans Verdrahtung) | → EXT trigger, standing connection |
 | TP-VM | 5 V motor supply | occasional sanity checks |
-| TP-ISEN | DRV8833 AISEN via 0.2 Ω to GND | **the shunt — see below** |
+| TP-ISEN | L9110-Modul GND-Rückleitung via 0.2 Ω | **the shunt — see below** |
 
-**Shunt proposal (replaces the "0.5 Ω in motor lead" idea — better):** the DRV8833
-has low-side sense pins. Lift AISEN from GND on the module (most cheap modules tie
-it straight to the ground pour — cut/lift as the module allows) and insert
-**0.2 Ω** to GND. Then V(TP-ISEN) = 0.2 · I_bridge, **single-ended vs GND** — no
-differential measurement, no channel wasted. Side effect: DRV8833 ITRIP (~200 mV)
-gives a passive ~1 A hardware current chop, comfortably above the expected ~0.5 A
-stall at 5 V. On the scope: ±50 mV range + analog offset (pico-bench's
-current-clamp recipe already auto-picks range+offset — reuse that code path).
-Fallback if the module can't be modified: 0.2 Ω into one motor lead, measured
-differentially with A−B — costs both channels, only M3/M6 suffer.
+**Shunt as built (Jan, 2026-07-16 — replaces the AISEN proposal, which assumed a
+DRV8833; the real bridge is an L9110 without sense pins):** **0.2 Ω in the GND
+return of the L9110 module** (GND — Shunt — GND-Brücke). V(TP-ISEN) =
+0.2 · I_bridge, **single-ended vs TP-GND** — no differential measurement, no
+channel wasted. It carries the **full** bridge current including switching
+spikes: live spikes >500 mV were observed, so use **±2 V/±5 V ranges for
+spike/transient work** and **±200..500 mV for averaged staircase levels** — the
+old ±50 mV recipe clips hard. There is **no ITRIP-style hardware current chop**
+on the L9110; the firmware interlocks are the only current protection.
 
 ## Standing connections (Jans Probe-Dressing, 2026-07-16)
 
@@ -53,10 +52,10 @@ lives in the current signature on probe 1).
 | M1 noise floor | TP-WIPER, AC, ±50 mV | TP-3V3, AC, ±50 mV | free-run + EXT marks | 1 MS/s |
 | M1b ADC-INL (optional, see below) | AWG signal at ADC pin, DC, ±5 V | — | EXT | 1 MS/s |
 | M2 PWM coupling | TP-WIPER, AC, ±50 mV | TP-PWM-A, DC, ±5 V | **Ch B rising** (phase-locked to PWM) | 10 MS/s |
-| M3 torque linearity | TP-ISEN, ±50 mV + offset | TP-PWM-A, DC, ±5 V | Ch B rising | 10 MS/s |
+| M3 torque linearity | TP-ISEN, ±0.5 V (Mittel) / ±2 V (Spikes) | TP-PWM-A, DC, ±5 V | Ch B rising | 10 MS/s |
 | M4 breakaway map | firmware CSV is primary | optional TP-WIPER DC ±5 V | EXT | 1 MS/s |
 | M5 step responses | firmware CSV primary; TP-ISEN adds current transients | TP-WIPER, DC, ±5 V | EXT | 1 MS/s |
-| M6 backlash | TP-ISEN, ±50 mV + offset | TP-WIPER, DC, ±5 V | EXT | 1 MS/s |
+| M6 backlash | TP-ISEN, ±0.5 V (Mittel) / ±2 V (Spikes) | TP-WIPER, DC, ±5 V | EXT | 1 MS/s |
 | M7 impulse ladder | firmware CSV primary | optional TP-ISEN | EXT | 1 MS/s |
 | M8 dither | TP-WIPER, AC, ±50 mV | TP-ISEN | EXT | 1 MS/s |
 
