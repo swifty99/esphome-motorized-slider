@@ -178,3 +178,42 @@
 - All runs tickhealth structurally clean (0 missed / 0 dup); zero thermal ticks; no reboot all
   night. Scope: still off USB at block start (VID 0x0CE9 absent — morning replug item).
 - Rig end state: player idle, position 59.5 %, mid-travel — left quiet as instructed.
+- 2026-07-17 01:08 `67_dither.csv`: DEMO move 1 (59.7->30) main pulse rev 50ms @0.8
+- 2026-07-17 01:09 `68_dither.csv`: DEMO move 1 trim 1: rev 39ms @0.8 (46.9->~33.5)
+- 2026-07-17 01:10 `69_dither.csv`: DEMO move 1 trim 2: rev 20ms @0.8 (34.7->~30.2)
+- 2026-07-17 01:10 `70_dither.csv`: DEMO move 2 (29.6->75) main pulse fwd 50ms @0.8
+- 2026-07-17 01:11 `71_dither.csv`: DEMO move 2 trim 1: fwd 46ms @0.8 (50.6->~70)
+- 2026-07-17 01:11 `72_dither.csv`: DEMO move 2 trim 2: fwd 22ms @0.8 (66.1->~73.2)
+- 2026-07-17 01:12 `73_dither.csv`: DEMO move 2 trim 3: fwd 12ms @0.8 (71.5->~74.3)
+- 2026-07-17 01:12 `74_dither.csv`: DEMO move 3 (74.1->40) main pulse rev 50ms @0.8 (band crossing)
+- 2026-07-17 01:13 `75_dither.csv`: DEMO move 3 trim 1: rev 38ms @0.8 (56.4->~43.4)
+- 2026-07-17 01:13 `76_dither.csv`: DEMO move 3 trim 2: rev 22ms @0.8 (45.3->~40.5)
+- 2026-07-17 01:14 `77_dither.csv`: DEMO move 4 (39.6->55) main pulse fwd 33ms @0.8
+- 2026-07-17 01:14 `78_dither.csv`: DEMO move 4 trim 1: fwd 8ms @0.8 (53.6->~55.1)
+
+## Demo block (demo-agent, open-loop positioning via calibrated impulses, 01:0x-01:1x, VM = 5.00 V)
+- STRETCH-GOAL DEMO per plant-model.md §7(b): 4 moves, host-side iteration, pulses only
+  (dither amp 0 / bias +/-0.8 = identical stimulus to M7 seg_pulse; no goto during moves,
+  no controller in firmware). Acceptance: smooth motion, landing +/-3 %. Widths from the
+  M7 nudge table, interpolated; per-round pulse sized ~80 % of remaining distance.
+- PROTOCOL (start -> target; pulses width/dir -> measured displacement; landing, error):
+  Move 1  59.7 -> 30 : 50ms rev -12.9 (band, x0.64 of table) | 39ms rev -12.2 | 20ms rev -5.1
+          landed 29.6, error -0.4 %  (3 pulses, runs 67-69)
+  Move 2  29.6 -> 75 : 50ms fwd +20.9 (x0.96) | 46ms fwd +15.5 | 22ms fwd +5.4 | 12ms fwd +2.6
+          landed 74.1, error -0.9 %  (4 pulses, runs 70-73)
+  Move 3  74.1 -> 40 : 50ms rev -17.8 (band crossing, x0.89) | 38ms rev -11.1 | 22ms rev -5.7
+          landed 39.6, error -0.4 %  (3 pulses, runs 74-76)
+  Move 4  39.6 -> 55 : 33ms fwd +14.1 (x1.17) | 8ms fwd +1.4
+          landed 55.0, error  0.0 %  (2 pulses, runs 77-78)
+- VERDICT: PASS on all 4 moves, worst landing error 0.9 % (acceptance was +/-3 %); 12 pulses
+  total, every pulse produced motion (no mid-travel stall at 0.8), all runs tickhealth
+  structurally clean (0 missed/0 dup, max jitter ~100 us), zero interlock ticks, zero
+  unstick uses, no goto during any move.
+- OBSERVATIONS for the modeler: (1) rev pulses inside/into the 55-80 band deliver x0.64-0.89
+  of the M7 table (early re-stick, as predicted; M7 was measured warm from ~50). (2) Outside
+  the band, delivery factor 0.76-1.17 of table — consistent with the stated +/-10-15 %
+  repeatability plus cold-vs-warm stiction (demo pulses fired 12-15 s after prior motion vs
+  M7's 0.4-1 s). (3) The iterative 80 %-of-remaining scheme converged in <=4 pulses per move
+  despite these factors — errors divide by ~3-5 per round as forecast.
+- Rig end state: player idle, position 55.1 %, mid-travel, torque 0, no reboot (uptime
+  continuous ~8.9 ks). Left quiet.
