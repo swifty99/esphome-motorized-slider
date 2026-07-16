@@ -178,9 +178,9 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 | Phase | Status | Notes |
 |---|---|---|
 | 0 Scaffold | ✅ done | commit 2612d29 |
-| 1 Lab rig | ✅ bis auf Scope-Alignment | v3 geflasht+verifiziert (9c1928c): 52k Intervalle 0 strukturelle Gaps, max Jitter 115µs, Dump 3.5s abort-fest; tickhealth PASS (6d13e31); Alignment-Gate = erster Block der Nacht-Session 2026-07-16→17 |
-| 2 Measurements | 🔶 läuft | autonome Nacht-Kampagne 2026-07-16→17 (Handover: docs/handover-night-2026-07-16.md); Nacht-Zuschnitt: A=Wiper/B=Shunt fest, M4/M7 nach goto-Fix, M8 nur objektiver Teil |
-| 3 Offline design | 🔶 startet mit M3-Daten | modeler offline; Deliverables plant-model.md + auto-ident-spec.md (Draft) |
+| 1 Lab rig | ✅ bis auf Scope-Alignment | v4 (goto 0.72+Param, Dump-Latch-Fix, Clamp 0.5) geflasht+verifiziert; Alignment-Gate wartet NUR auf Scope-Replug (PicoScope fiel 2026-07-16 ~20:35 vom USB-Bus) — ein Rerun von Run 31 mit --scope alignment schließt es |
+| 2 Measurements | ✅ CSV-Teil (Nacht 07-16→17) | M1/M4/M5/M6/M7/M8-objektiv + Fein-Ladders + M2-CSV komplett, 127 Runs; OFFEN (brauchen Scope): M3 I(duty)→K/R, M2-Spikes, M1b INL, Ch-A-Co-Swing; Entscheidungen: decay FAST empfohlen, Dither kein Wundermittel (Δbase≈Amplitude), Backlash nicht auflösbar; Summary: docs/findings/night-2026-07-17.md |
+| 3 Offline design | ✅ Sim+Observer / 🔶 Controller | Plant-Sim validiert (1–3% RMSE |duty|≥0.75), EKF-Observer 3–5× besser als Legacy bei ~0 Lag, plant-model.md + auto-ident-spec.md (Draft) committed; Open-Loop-Impuls-Demo 4/4 ±1% (Runs 07-17/67–78) = „90% FF" bewiesen; OFFEN: Controller-Prototyp im Sim (Kaskade FF+PID, Endgame, Override) |
 | 4 Controller spec | ⬜ | approval gate |
 | 5 Implementation + SIL | ⬜ | |
 | 6 HIL verification | ⬜ | flash gate |
