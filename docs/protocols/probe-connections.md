@@ -70,13 +70,28 @@ disconnect the wiper wire from GPIO9, feed the AWG directly into the ADC pin
 Ch A. Firmware CSV vs known ramp = the S2's INL + noise, isolated. Legacy suspicion:
 S2 ADC at DB_12 attenuation is visibly nonlinear — this measures how much.
 
-## Grounding rules
+## Grounding rules — OTA-only when the scope is on (decided 2026-07-16)
 
-- One star point (TP-GND). Scope ground clips go there and only there.
-- Rig is USB-powered from the Mac; scope chassis is mains-earthed — shared earth
-  is fine, but don't add a second earth path (no extra bench PSU ground to the rig
-  during scope sessions unless it floats).
-- Never clip a scope ground lead to a non-GND net (the clips are earth-bonded).
+The Mac shares earth with the scope; USB-powering the rig from the Mac would close
+a ground loop straight through the ground clips — into exactly the mV-level
+measurements the campaign depends on (M1 noise floor, M2 coupling, M3/M6 ISEN).
+The rig is wireless-first by design (HA service start, HTTP CSV dump), so:
+
+- **Simple rule: scope clipped ⇒ USB unplugged.** The rig floats on a **USB power
+  bank** (preferred: battery = no switching hash, no earth path; a Class-II
+  double-insulated wall charger is the fallback). All control and data over WiFi.
+  The scope's clip at TP-GND is then the single ground reference by construction.
+- USB-to-Mac is fine for flashing and bring-up — scope disconnected.
+- **Power-bank caveats:** (1) pick one that doesn't auto-off at light load —
+  S2 idle can drop under many banks' keep-alive threshold; if runs die mid-session,
+  that's the first suspect. (2) **VM sags as the bank drains, and torque constant
+  K ∝ VM** — note VM (multimeter at TP-VM, or a scope spot-check) at the start of
+  every run block in `notes.md`; the M3/M5 fits need it.
+- One star point (TP-GND). All scope ground clips go there and only there;
+  clip ground first, then probes. Never clip a ground lead to a non-GND net
+  (clips are earth-bonded).
+- Same pattern pico-bench already validated on the ESP32-C6 (OTA current
+  measurement, USB off).
 
 ## Data landing convention
 
