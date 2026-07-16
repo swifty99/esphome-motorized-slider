@@ -37,8 +37,19 @@ constexpr float kThermalLimit = 0.5f;  // 10 s moving average of |duty|
 constexpr uint32_t kMaxBudgetMs = 900000;  // absolute sanity cap (15 min)
 // recorder
 constexpr uint32_t kPostTailMs = 500;  // keep recording this long after program end
+// R6 dump-session guards (dump-latch fix): a client that stalls or vanishes
+// mid-download must never hold dump_active_ (and with it run_experiment)
+// hostage. (1) explicit per-send timeout: a send that makes no progress fails
+// after a few seconds instead of relying on httpd/lwIP defaults; (2) hard
+// session cap: even a slowly-trickling client cannot hold the dump open
+// forever (a full 75k-record dump takes ~9 s at wire speed).
+constexpr int kDumpSendTimeoutS = 3;
+constexpr int64_t kDumpSessionCapUs = 30LL * 1000000;
 // R7 repositioning helper (NOT-A-CONTROLLER, see seg_goto below)
-constexpr float kGotoDuty = 0.55f;   // fixed bang-bang duty, above breakaway (~0.42)
+// Bench bracket 2026-07-16: 0.55 only creeps (~0.2 %/4 s), 0.7 flies — the
+// legacy breakaway 0.42 is wrong. 0.72 repositions reliably; per-run override
+// via the shared experiment param "goto_duty".
+constexpr float kGotoDuty = 0.72f;   // default bang-bang duty
 constexpr float kGotoTol = 2.0f;     // % — generous by design
 constexpr uint32_t kGotoMaxMs = 4000;
 // program sanity caps
@@ -109,12 +120,12 @@ Segment seg_settle(uint32_t ms) {
 // behavior is representative of the future servo, and it must never be
 // "improved" into one.
 // =============================================================================
-Segment seg_goto(float target_pct, uint32_t max_ms = kGotoMaxMs) {
+Segment seg_goto(float target_pct, float duty = kGotoDuty, uint32_t max_ms = kGotoMaxMs) {
   Segment s;
   s.type = SegType::GOTO;
   s.duration_ms = max_ms;
   s.a = target_pct;
-  s.b = kGotoDuty;
+  s.b = duty;
   s.c = kGotoTol;
   return s;
 }
@@ -717,6 +728,9 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
   out.mode = (strcmp((const char *) (p["mode"] | "fast"), "slow") == 0) ? DecayMode::SLOW : DecayMode::FAST;
   out.raw_samples = p["raw"] | false;
   out.endstop_safe = p["endstop_safe"] | false;
+  // R7: shared override for the goto helper's bang-bang duty (repositioning
+  // only, NOT-A-CONTROLLER). Too low just means goto times out harmlessly.
+  const float goto_duty = clampf(p["goto_duty"] | kGotoDuty, 0.0f, 0.9f);
   auto &sg = out.segments;
 
   if (name == "noise_floor") {
@@ -726,9 +740,11 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
     sg.push_back(seg_settle(ms));
 
   } else if (name == "pwm_coupling") {
-    // M2: stalled low duty, phase-locked EMI hunt. Duty clamped <= 0.35 so the
-    // slider stays below breakaway (~0.42) and does not move.
-    const float duty = clampf(p["duty"] | 0.2f, 0.0f, 0.35f);
+    // M2: stalled low duty, phase-locked EMI hunt. Duty clamped <= 0.5 so the
+    // slider stays below breakaway and does not move (bench 2026-07-16:
+    // 0.55 only creeps, 0.7 flies — the legacy 0.42 was wrong; M2 needs
+    // near-stall currents just under the real breakaway).
+    const float duty = clampf(p["duty"] | 0.2f, 0.0f, 0.5f);
     const uint32_t ms = (uint32_t) ((p["duration_s"] | 10.0f) * 1000.0f);
     out.raw_samples = true;
     sg.push_back(seg_settle(300));
@@ -763,7 +779,7 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
     for (float pos : positions) {
       for (int r = 0; r < repeats; r++) {
         for (float s : dir_list()) {
-          sg.push_back(seg_goto(pos));
+          sg.push_back(seg_goto(pos, goto_duty));
           sg.push_back(seg_settle(500));
           sg.push_back(seg_breakaway(s * step, interval, thresh, 3000));
           sg.push_back(seg_hold_last(hold_ms));  // does motion sustain?
@@ -779,7 +795,7 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
     const float s = dir_sign();
     const float start = p["start"] | ((s > 0) ? 20.0f : 80.0f);
     const uint32_t hold_ms = p["hold_ms"] | 5000;
-    sg.push_back(seg_goto(start));
+    sg.push_back(seg_goto(start, goto_duty));
     sg.push_back(seg_settle(500));
     sg.push_back(seg_hold(s * duty, hold_ms));
     sg.push_back(seg_settle(500));
@@ -793,7 +809,7 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
     const int cycles = p["cycles"] | 3;
     const float s = dir_sign();
     for (int i = 0; i < cycles; i++) {
-      sg.push_back(seg_goto(pos));
+      sg.push_back(seg_goto(pos, goto_duty));
       sg.push_back(seg_settle(500));
       sg.push_back(seg_hold(s * approach, 600));
       sg.push_back(seg_settle(600));
@@ -812,14 +828,14 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
     const uint32_t settle_ms = p["settle_ms"] | 300;
     const int recenter_every = p["recenter_every"] | 5;
     const bool cold = p["cold_reversal"] | false;
-    sg.push_back(seg_goto(pos));
+    sg.push_back(seg_goto(pos, goto_duty));
     sg.push_back(seg_settle(500));
     int shots = 0;
     for (float s : dir_list()) {
       for (float w : widths) {
         for (int r = 0; r < repeats; r++) {
           if (shots > 0 && recenter_every > 0 && (shots % recenter_every) == 0) {
-            sg.push_back(seg_goto(pos));
+            sg.push_back(seg_goto(pos, goto_duty));
             sg.push_back(seg_settle(300));
           }
           if (cold) {
@@ -845,13 +861,13 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
     const float thresh = p["move_threshold"] | 0.3f;
     const bool baseline = p["baseline"] | true;
     const float s = dir_sign();
-    sg.push_back(seg_goto(pos));
+    sg.push_back(seg_goto(pos, goto_duty));
     sg.push_back(seg_settle(500));
     if (baseline) {
       sg.push_back(seg_breakaway(s * step, interval, thresh, 3000));
       sg.push_back(seg_hold_last(300));
       sg.push_back(seg_settle(500));
-      sg.push_back(seg_goto(pos));
+      sg.push_back(seg_goto(pos, goto_duty));
       sg.push_back(seg_settle(500));
     }
     sg.push_back(seg_breakaway(s * step, interval, thresh, 3000, f, amp));
@@ -864,7 +880,7 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
     const uint32_t ramp_ms = p["ramp_ms"] | 4000;
     const float s = dir_sign();
     const float start = p["start"] | ((s > 0) ? 20.0f : 80.0f);
-    sg.push_back(seg_goto(start));
+    sg.push_back(seg_goto(start, goto_duty));
     sg.push_back(seg_settle(500));
     sg.push_back(seg_ramp(0.0f, s * peak, ramp_ms));
     sg.push_back(seg_ramp(s * peak, 0.0f, ramp_ms));
@@ -954,6 +970,13 @@ esp_err_t SliderLab::handle_dump_(httpd_req_t *req) {
   if (sockfd >= 0) {
     int nodelay = 1;
     setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+    // dump-latch fix: bound every blocking send. A dead or stalled client
+    // makes the next chunk send fail within kDumpSendTimeoutS instead of
+    // blocking until the TCP session dies, so dump_active_ always clears.
+    struct timeval tv = {};
+    tv.tv_sec = kDumpSendTimeoutS;
+    tv.tv_usec = 0;
+    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
   }
 
   const uint32_t n = this->count_.load();
@@ -998,8 +1021,16 @@ esp_err_t SliderLab::handle_dump_(httpd_req_t *req) {
   // the recording. Both fields are exact decimal fixed-point anyway
   // (t = µs, adc mean of 4 samples = quarter counts), so integers are not an
   // approximation; the CSV contract output is unchanged.
+  // dump-latch fix: hard wall-clock cap on the whole session — a client that
+  // trickle-reads (making just enough progress to dodge the send timeout)
+  // must not hold dump_active_ (= the run_experiment lockout) indefinitely.
+  const int64_t deadline_us = esp_timer_get_time() + kDumpSessionCapUs;
   size_t used = 0;
   for (uint32_t i = 0; i < n && err == ESP_OK; i++) {
+    if (esp_timer_get_time() > deadline_us) {
+      err = ESP_ERR_TIMEOUT;
+      break;
+    }
     const Record &r = this->buf_[i];
     const unsigned t_int = r.t_us / 1000u;
     const unsigned t_frac = r.t_us % 1000u;
@@ -1029,10 +1060,13 @@ esp_err_t SliderLab::handle_dump_(httpd_req_t *req) {
   free(buf);
   this->dump_active_.store(false);
   if (err != ESP_OK) {
-    // client went away mid-stream (stall/abort): terminate cleanly, make httpd
-    // close the session. The recording is untouched — the buffer is only ever
-    // cleared when a new experiment arms (start_run_).
-    ESP_LOGW(TAG, "dump aborted by client after %u records (socket send failed)", (unsigned) n);
+    // client went away or stalled mid-stream: terminate cleanly, make httpd
+    // close the session. dump_active_ is released on EVERY exit path — a
+    // latched flag silently refused all run_experiment calls (bench bug).
+    // The recording is untouched — the buffer is only ever cleared when a
+    // new experiment arms (start_run_).
+    ESP_LOGW(TAG, "dump aborted after %u records (%s)", (unsigned) n,
+             err == ESP_ERR_TIMEOUT ? "30 s session cap" : "client stalled/gone, socket send failed");
     return ESP_FAIL;
   }
   return ESP_OK;

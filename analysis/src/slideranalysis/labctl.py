@@ -80,7 +80,7 @@ WANTED_ENTITIES = (ENT_UPTIME, ENT_PLAYER, ENT_TICK, ENT_POSITION, ENT_SYNC)
 # experiment catalog + duration estimation (mirrors the firmware builder)
 # ---------------------------------------------------------------------------
 
-GOTO_MAX_S = 4.0        # R7: bang-bang duty 0.55, timeout 4 s (worst case = planned)
+GOTO_MAX_S = 4.0        # R7: bang-bang duty 0.72 (param "goto_duty"), timeout 4 s (worst case = planned)
 BREAKAWAY_MAX_S = 3.0   # breakaway ramp segment max_ms (self-terminating)
 RECORD_TAIL_S = 0.5     # recording continues ~500 ms after the program ends
 
