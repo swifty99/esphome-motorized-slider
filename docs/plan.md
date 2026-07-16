@@ -152,9 +152,10 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 
 ## Open questions for Jan
 
-1. OK to lift **AISEN** on the DRV8833 module and insert the 0.2 Ω shunt?
-   (Best measurement per soldered minute in the whole campaign; M3/M6 degrade
-   without it.)
+1. Shunt: Jan hat 2026-07-16 eine Probe für Wiper+Shunt vorbereitet (Dressing in
+   probe-connections.md) — **wo der Shunt sitzt, ist noch unbestätigt**: AISEN-Lift
+   am DRV8833 (0.2 Ω, single-ended — der Vorschlag) oder Motorleitung
+   (differentiell, kostet beide Kanäle)? Wert bestätigen (0.2 Ω → ITRIP ~1 A).
 2. Is **force feedback / Rastpunkte** a v1 requirement, or is smooth positioning the
    priority and FF comes as v1.1? (Affects Phase 4 spec scope, not Phases 1–3.)
 

@@ -17,7 +17,7 @@ clip archaeology:
 | TP-3V3 | 3.3 V rail | noise reference for M1 |
 | TP-PWM-A | GPIO11 / DRV8833 AIN1 | forward drive side |
 | TP-PWM-B | GPIO10 / DRV8833 AIN2 | needed for slow-decay work |
-| TP-SYNC | GPIO12 | → EXT trigger, standing connection |
+| TP-SYNC | GPIO14 (Jans Verdrahtung) | → EXT trigger, standing connection |
 | TP-VM | 5 V motor supply | occasional sanity checks |
 | TP-ISEN | DRV8833 AISEN via 0.2 Ω to GND | **the shunt — see below** |
 
@@ -32,12 +32,19 @@ current-clamp recipe already auto-picks range+offset — reuse that code path).
 Fallback if the module can't be modified: 0.2 Ω into one motor lead, measured
 differentially with A−B — costs both channels, only M3/M6 suffer.
 
-## Standing connection
+## Standing connections (Jans Probe-Dressing, 2026-07-16)
 
-**TP-SYNC → EXT trigger. Always.** Every capture triggers off the experiment
-program (rising = program start, segment boundaries blip LOW for 1 ms). This is
-what makes scope captures and firmware CSV sample-exact alignable without eating
-a channel.
+**TP-SYNC (GPIO14) → EXT trigger. Always.** Every capture triggers off the
+experiment program (rising = program start, segment boundaries blip LOW for 1 ms).
+This is what makes scope captures and firmware CSV sample-exact alignable without
+eating a channel.
+
+Probes as dressed at the bench: **probe 1 ↔ wiper or shunt** (re-clip per
+experiment), **probe 2 ↔ PWM pins only**. This covers every essential capture in
+the table below; the two deviations from the original plan are minor: M1's 3.3 V
+rail comparison needs a one-off re-clip of probe 2, and M6 drops the simultaneous
+scope-wiper (the firmware records the pot at 1 kHz anyway — engagement detection
+lives in the current signature on probe 1).
 
 ## Per-experiment channel map
 

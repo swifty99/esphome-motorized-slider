@@ -69,10 +69,11 @@ and its own timeout, usable only *between* program segments (never recorded as d
 Marked loudly in code as NOT-A-CONTROLLER.
 
 ### R8 — Scope sync
-GPIO12: HIGH during an experiment program, plus a 1 ms LOW blip at every segment
-boundary. Goes to the PicoScope 3203D **EXT trigger input** (not a channel — the
-3203D only has two), so both analog channels stay free while every capture is
-sample-exact alignable with CSV records. See `docs/protocols/probe-connections.md`.
+GPIO14 (Jans Verdrahtung, 2026-07-16; ursprünglich GPIO12 geplant): HIGH during an
+experiment program, plus a 1 ms LOW blip at every segment boundary. Goes to the
+PicoScope 3203D **EXT trigger input** (not a channel — the 3203D only has two), so
+both analog channels stay free while every capture is sample-exact alignable with
+CSV records. See `docs/protocols/probe-connections.md`.
 
 ### R9 — Minimal HA surface
 Position sensor at ~10 Hz (sanity only), experiment-state text sensor,
