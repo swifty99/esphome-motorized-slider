@@ -164,7 +164,7 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 | Phase | Status | Notes |
 |---|---|---|
 | 0 Scaffold | ✅ done | commit 2612d29 |
-| 1 Lab rig | 🔨 built, gate pending | firmware compile PASS (0585e5f) + analysis 15/15 (0924cfb); gate needs: flash (Jans OK), tickhealth on real run, scope alignment |
+| 1 Lab rig | ✅ bis auf Scope-Alignment | v3 geflasht+verifiziert (9c1928c): 52k Intervalle 0 strukturelle Gaps, max Jitter 115µs, Dump 3.5s abort-fest; tickhealth PASS (6d13e31); fehlt nur EXT-Trigger-Alignment = Minute 1 von Bench-Session 1 |
 | 2 Measurements | ⬜ | needs Phase 1 + rig session with Jan |
 | 3 Offline design | ⬜ | |
 | 4 Controller spec | ⬜ | approval gate |
