@@ -40,6 +40,8 @@ def write_run(
     gap_after: int | None = None,
     gap_dt_ms: int = 3,
     duplicate_at: int | None = None,
+    late_at: int | None = None,
+    late_us: float = 0.0,
     seed: int = 0,
 ) -> Path:
     """Write one synthetic lab CSV. Returns the path.
@@ -50,6 +52,8 @@ def write_run(
     - ``gap_after``: index i such that t_ms[i+1] - t_ms[i] == gap_dt_ms
       (a gap_dt_ms of 3 seeds a 3 ms gap = 2 missed ticks).
     - ``duplicate_at``: index i such that t_ms[i] == t_ms[i-1].
+    - ``late_at``/``late_us``: shift record i by late_us microseconds (seeds
+      timeline jitter: dt[i-1] = 1000 + late_us, dt[i] = 1000 - late_us).
     """
     rng = np.random.default_rng(seed)
 
@@ -63,11 +67,13 @@ def write_run(
     else:
         adc = 4000.0 + rng.normal(0.0, 3.0, n_ticks)
 
-    t_ms = np.arange(n_ticks, dtype=np.int64)
+    t_ms = np.arange(n_ticks, dtype=np.float64)
     if gap_after is not None:
         t_ms[gap_after + 1:] += gap_dt_ms - 1
     if duplicate_at is not None:
         t_ms[duplicate_at] = t_ms[duplicate_at - 1]
+    if late_at is not None:
+        t_ms[late_at] += late_us / 1000.0
 
     if tick_us is None:
         # realistic tick WORK DURATIONS: ~280 us typical (200-400 us range),
@@ -88,8 +94,11 @@ def write_run(
         header = HEADER + (SAMPLE_HEADER if samples is not None else [])
         fh.write(",".join(header) + "\n")
         for i in range(n_ticks):
+            # integer timestamps print as plain ints (firmware u32 ms case);
+            # fractional ones keep sub-ms resolution
+            t_str = f"{t_ms[i]:.3f}".rstrip("0").rstrip(".")
             row = [
-                str(int(t_ms[i])),
+                t_str,
                 f"{adc[i]:.2f}",
                 str(int(duty_milli[i])),
                 str(int(seg[i])),

@@ -22,9 +22,10 @@ uv run noise data/2026-07-16/01_noise_floor.csv [more.csv ...]
   2-digit number in that day's folder, the experiment name comes from the
   dump's meta lines. `--note` appends a timestamped line to `notes.md` in the
   same folder (one notes.md per bench session/day, per campaign protocol).
-- `tickhealth` — Phase-1 gate: delta-t histogram from `t_ms`, missed/duplicated
-  tick count, `tick_us` (work duration) p50/p95/p99. PASS = zero gaps (every
-  delta-t inside 1000 µs ± 100 µs) AND tick_us p99 ≤ 900 µs.
+- `tickhealth` — Phase-1 gate: delta-t histogram from `t_ms`, structural
+  defect count, delta-t jitter stats, `tick_us` (work duration) p50/p95/p99.
+  PASS = zero structural defects (missed: Δt ≥ 1500 µs; duplicated:
+  Δt ≤ 500 µs) AND Δt jitter max ≤ 250 µs AND tick_us p99 ≤ 900 µs.
   Saves `<csv>_tickhealth.png`, prints the verdict, exit code 1 on FAIL.
 - `noise` — M1: RMS + peak-to-peak in counts and % of travel, intra-tick
   sample spread (when s0..s3 are recorded), Welch PSD (fs = 1 kHz) with
@@ -70,9 +71,13 @@ Resolutions taken here that the firmware side must match:
 
 - **Meta line syntax** is exactly `# key: value`; the params line is
   `# params: {...json...}`.
-- **tickhealth gap definition**: any delta-t outside 1000 ± 100 µs is a gap
-  event; above the band counts `round(dt/1000) − 1` missed ticks (min 1),
-  below the band counts as a duplicated record.
+- **tickhealth timeline gate** separates two failure classes (calibrated on
+  5 real quiet-mode hardware runs, 52k intervals, worst jitter ≈ 115 µs):
+  *structural* — missed = Δt ≥ 1500 µs (1.5 periods, counted as
+  `round(dt/1000) − 1`), duplicated/non-monotonic = Δt ≤ 500 µs; both must be
+  zero. Everything in between is *jitter* |Δt − 1000|, reported as p50/p99/max
+  and gated at max ≤ 250 µs (quarter period, `--jitter-limit-us`). A tick
+  101 µs late is jitter, not a miss.
 - **tick_us** is the tick *work duration* (firmware-confirmed). Default gate:
   p99 ≤ 900 µs — guard band under the 1000 µs budget, computed as
   nominal − tol. The period interpretation is kept behind
