@@ -163,7 +163,7 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 | Phase | Status | Notes |
 |---|---|---|
 | 0 Scaffold | ✅ done | commit 2612d29 |
-| 1 Lab rig | 🔨 in progress | spec fixed for DRV8833/S2-mini; firmware + analysis scaffold building |
+| 1 Lab rig | 🔨 built, gate pending | firmware compile PASS (0585e5f) + analysis 15/15 (0924cfb); gate needs: flash (Jans OK), tickhealth on real run, scope alignment |
 | 2 Measurements | ⬜ | needs Phase 1 + rig session with Jan |
 | 3 Offline design | ⬜ | |
 | 4 Controller spec | ⬜ | approval gate |
