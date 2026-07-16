@@ -36,3 +36,38 @@
   (0 missed/dup, jitter p99 42 us, tick_us p99 451 us). No npz — no scope.
 - Campaign recommendation: NO-GO for scope in M1/M2/M3 until the scope is replugged;
   CSV-only blocks remain valid.
+- 2026-07-16 23:28 `32_noise_floor.csv`: Block 1 M1: noise floor pt 1/3, mid-travel, VM 5.00 V
+- 2026-07-16 23:29 `33_step_response.csv`: Block 1: zero-duty goto reposition to 20 %
+- 2026-07-16 23:29 `34_noise_floor.csv`: Block 1 M1: noise floor pt 2/3, low-travel ~22 %, VM 5.00 V
+- 2026-07-16 23:30 `35_step_response.csv`: Block 1: zero-duty goto reposition to 80 %
+- 2026-07-16 23:30 `36_noise_floor.csv`: Block 1 M1: noise floor pt 3/3, high-travel ~80 %, VM 5.00 V
+- 2026-07-16 23:30 `37_step_response.csv`: Block 1: zero-duty goto reposition to 13 % (ladder runway)
+- 2026-07-16 23:31 `38_duty_ladder.csv`: Block 1: duty ladder FAST mode, fwd from ~15 %, rungs 0.05-0.70, VM 5.00 V
+- 2026-07-16 23:33 `39_step_response.csv`: Block 1: zero-duty goto reposition to 13 % (slow ladder runway)
+
+## Block 1 (campaign-runner, CSV-only, 23:2x-23:4x, VM = 5.00 V)
+- M1 noise floor (raw samples, 10 s each, motor unpowered) — COMPLETE, all VERDICT PASS, tickhealth
+  structurally clean (0 missed / 0 dup), jitter p99 53-54 us, tick_us p99 421-424 us:
+  - `32_noise_floor.csv` @ 44.2 % (adc 4456..4550, spread 93 counts)
+  - `34_noise_floor.csv` @ 21.8 % (adc 6224..6325, spread 100 counts)
+  - `36_noise_floor.csv` @ 79.5 % (adc 1670..1766, spread 96 counts)
+  Repositioning via zero-duty step_response gotos: `33_` (44->21.9 %), `35_` (21.9->79.5 %).
+- Duty ladder FAST (`38_duty_ladder.csv`, fwd from 15.1 %, d0 0.05 d1 0.70 step 0.05,
+  step_ms 1000, pause 800): VERDICT WARN (endzone 632 ticks at the very end), tickhealth PASS.
+  Per-rung result (position 15 %, fwd): duty <= 0.60 -> stall (|dpos| <= 0.24 %);
+  0.65 -> creep +4.4 %/s; 0.70 -> +211 %/s, traversed 19.6 -> 97.8 % in <0.5 s, endzone cut,
+  momentum carried the knob to 98.0 % INSIDE the end zone. Sharp breakaway between 0.60 and 0.65,
+  violent 0.65->0.70 nonlinearity at this position — prime modeler input.
+- STUCK: slider parked at 98.0 % (> kEndzoneHi 97). The endzone interlock cuts ALL torque there
+  (slider_lab.cpp:376, direction-agnostic), so no non-endstop_safe program can move it —
+  verified: `37_step_response.csv` (goto to 13) burned its 4 s timeout with zero movement.
+  The established unstick (endstop_safe nudge, used earlier tonight: runs 12/25/26) is FORBIDDEN
+  by the night-session rules ("No endstop_safe experiments"), so campaign-runner did not use it.
+- PARKED (blocked, not attempted): duty ladder SLOW mode; step_response 0.6/0.7/0.8 fwd+rev;
+  triangle fast/slow. NOTE: these would very likely re-park the slider in an end zone anyway
+  (M5's end-zone cut is "part of the data" per firmware); the campaign design assumes an
+  unstick capability that the night rules forbid. Needs a coordinator/Jan decision:
+  authorize a minimal endstop_safe nudge (~150 ms, duty ~0.8, away from the end) or free it
+  by hand in the morning.
+- Anomaly for the modeler: breakaway at 15 % needed >= 0.65 duty; bench earlier saw 0.55 creep /
+  0.7 fly at mid-travel — consistent with strong position-dependence of stiction.
