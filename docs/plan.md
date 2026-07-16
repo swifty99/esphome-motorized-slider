@@ -140,23 +140,30 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 - Python side: uv-managed project in `analysis/`.
 - Repo local-only for now; Forgejo remote when Jan wants one.
 
-## Open questions for Jan (non-blocking for Phases 0–1 design, blocking for M3)
+## Answered (2026-07-16)
 
-1. **Which H-bridge module** is on the test rig? (Decay-mode options and the correct
-   "slow decay" pin recipe depend on it — DRV8833/TB6612/L298/L9110 all differ.)
-2. **Which board exactly** — ESP32-S2 Mini (2 MB PSRAM) or an S3? (Recorder buffer
-   sizing; both work.)
-3. **Picoscope model, and is a current probe available?** If not: OK to solder a
-   0.5 Ω shunt into one motor lead for M3/M6? (Cheap, hugely informative.)
-4. Is **force feedback / Rastpunkte** a v1 requirement, or is smooth positioning the
+1. H-bridge: **DRV8833** → decay recipes fixed in lab-rig-spec R3 (slow decay =
+   drive pin 100 %, other pin PWM(1−d)).
+2. Board: **ESP32-S2 Mini** (2 MB PSRAM) → recorder buffer in PSRAM.
+3. Scope: **PicoScope 3203D** (2 ch + EXT + AWG) with the automation toolkit in
+   `/Users/jan/dev/repos/pico-bench` (Rosetta x86 venv, block capture proven).
+   Connection plan: `docs/protocols/probe-connections.md`. Shunt proposal changed
+   to **0.2 Ω at the DRV8833 AISEN pin** (single-ended, no channel cost).
+
+## Open questions for Jan
+
+1. OK to lift **AISEN** on the DRV8833 module and insert the 0.2 Ω shunt?
+   (Best measurement per soldered minute in the whole campaign; M3/M6 degrade
+   without it.)
+2. Is **force feedback / Rastpunkte** a v1 requirement, or is smooth positioning the
    priority and FF comes as v1.1? (Affects Phase 4 spec scope, not Phases 1–3.)
 
 ## Status tracker
 
 | Phase | Status | Notes |
 |---|---|---|
-| 0 Scaffold | ✅ done | this commit |
-| 1 Lab rig | ⬜ next | spec ready, implementation not started |
+| 0 Scaffold | ✅ done | commit 2612d29 |
+| 1 Lab rig | 🔨 in progress | spec fixed for DRV8833/S2-mini; firmware + analysis scaffold building |
 | 2 Measurements | ⬜ | needs Phase 1 + rig session with Jan |
 | 3 Offline design | ⬜ | |
 | 4 Controller spec | ⬜ | approval gate |

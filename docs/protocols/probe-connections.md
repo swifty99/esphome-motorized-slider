@@ -1,0 +1,87 @@
+# Probe & Bench Connections — PicoScope 3203D via pico-bench
+
+Scope facts (from `/Users/jan/dev/repos/pico-bench`): 3203D, **2 channels** (A/B),
+EXT trigger input, AWG output, 8-bit ADC (analog offset available — use it),
+64 MS memory, ps3000a driver under Rosetta (`arch -x86_64 .venv-x86/bin/python`).
+Close the PicoScope 7 app before scripting; USB-3 port preferred.
+
+## One-time rig prep (Jan, soldering iron, ~30 min)
+
+Add permanent test points (pin headers or wire loops) so sessions don't start with
+clip archaeology:
+
+| TP | Net | Notes |
+|---|---|---|
+| TP-GND | ground star point | at the pot's GND terminal; **all** scope ground clips land here, nowhere else |
+| TP-WIPER | pot wiper = GPIO9 | the feedback signal |
+| TP-3V3 | 3.3 V rail | noise reference for M1 |
+| TP-PWM-A | GPIO11 / DRV8833 AIN1 | forward drive side |
+| TP-PWM-B | GPIO10 / DRV8833 AIN2 | needed for slow-decay work |
+| TP-SYNC | GPIO12 | → EXT trigger, standing connection |
+| TP-VM | 5 V motor supply | occasional sanity checks |
+| TP-ISEN | DRV8833 AISEN via 0.2 Ω to GND | **the shunt — see below** |
+
+**Shunt proposal (replaces the "0.5 Ω in motor lead" idea — better):** the DRV8833
+has low-side sense pins. Lift AISEN from GND on the module (most cheap modules tie
+it straight to the ground pour — cut/lift as the module allows) and insert
+**0.2 Ω** to GND. Then V(TP-ISEN) = 0.2 · I_bridge, **single-ended vs GND** — no
+differential measurement, no channel wasted. Side effect: DRV8833 ITRIP (~200 mV)
+gives a passive ~1 A hardware current chop, comfortably above the expected ~0.5 A
+stall at 5 V. On the scope: ±50 mV range + analog offset (pico-bench's
+current-clamp recipe already auto-picks range+offset — reuse that code path).
+Fallback if the module can't be modified: 0.2 Ω into one motor lead, measured
+differentially with A−B — costs both channels, only M3/M6 suffer.
+
+## Standing connection
+
+**TP-SYNC → EXT trigger. Always.** Every capture triggers off the experiment
+program (rising = program start, segment boundaries blip LOW for 1 ms). This is
+what makes scope captures and firmware CSV sample-exact alignable without eating
+a channel.
+
+## Per-experiment channel map
+
+| Exp | Ch A | Ch B | Trigger | Sampling |
+|---|---|---|---|---|
+| M1 noise floor | TP-WIPER, AC, ±50 mV | TP-3V3, AC, ±50 mV | free-run + EXT marks | 1 MS/s |
+| M1b ADC-INL (optional, see below) | AWG signal at ADC pin, DC, ±5 V | — | EXT | 1 MS/s |
+| M2 PWM coupling | TP-WIPER, AC, ±50 mV | TP-PWM-A, DC, ±5 V | **Ch B rising** (phase-locked to PWM) | 10 MS/s |
+| M3 torque linearity | TP-ISEN, ±50 mV + offset | TP-PWM-A, DC, ±5 V | Ch B rising | 10 MS/s |
+| M4 breakaway map | firmware CSV is primary | optional TP-WIPER DC ±5 V | EXT | 1 MS/s |
+| M5 step responses | firmware CSV primary; TP-ISEN adds current transients | TP-WIPER, DC, ±5 V | EXT | 1 MS/s |
+| M6 backlash | TP-ISEN, ±50 mV + offset | TP-WIPER, DC, ±5 V | EXT | 1 MS/s |
+| M7 impulse ladder | firmware CSV primary | optional TP-ISEN | EXT | 1 MS/s |
+| M8 dither | TP-WIPER, AC, ±50 mV | TP-ISEN | EXT | 1 MS/s |
+
+Block-mode memory budget: 64 MS ÷ 2 ch → ~6.4 s at 10 MS/s (plenty for PWM-edge
+work), ~32 s at 1 MS/s (covers every scripted program).
+
+M6 is where the shunt earns its keep: during backlash traversal the motor runs
+unloaded (current low, pot flat), at belt engagement the current steps up — the
+gap becomes directly visible as a time × current signature instead of being
+inferred from pot dead time.
+
+## M1b — AWG bonus experiment (recommended, ~15 min in session 1)
+
+The 3203D AWG separates **ESP32-S2 ADC nonlinearity** from **pot track
+nonlinearity** — two error sources the self-calibrating endpoints can't tell apart:
+disconnect the wiper wire from GPIO9, feed the AWG directly into the ADC pin
+(0→2.75 V slow ramp, 30 s), record with the lab firmware, monitor the same node on
+Ch A. Firmware CSV vs known ramp = the S2's INL + noise, isolated. Legacy suspicion:
+S2 ADC at DB_12 attenuation is visibly nonlinear — this measures how much.
+
+## Grounding rules
+
+- One star point (TP-GND). Scope ground clips go there and only there.
+- Rig is USB-powered from the Mac; scope chassis is mains-earthed — shared earth
+  is fine, but don't add a second earth path (no extra bench PSU ground to the rig
+  during scope sessions unless it floats).
+- Never clip a scope ground lead to a non-GND net (the clips are earth-bonded).
+
+## Data landing convention
+
+Scope captures saved as `.npz` (pico-bench archive format) next to the lab CSVs:
+`data/<date>/<seq>_<experiment>.csv` + `<seq>_<experiment>_scope.npz` + session
+`notes.md`. Recipe/limit YAMLs specific to this project live here (pico-bench
+README: consuming repo owns recipes), under `analysis/scope-recipes/` when we get
+to them.

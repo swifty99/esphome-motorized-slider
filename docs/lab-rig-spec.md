@@ -21,11 +21,19 @@ ADC oneshot, 13-bit, N=4 averaged samples per tick — but the recorder stores t
 samples for noise work in M1/M2. All filtering happens offline; the lab rig must
 never pre-shape the data it exists to characterize.
 
-### R3 — Drive with selectable decay mode
-Sign-magnitude output like legacy (PWM one side / LOW other) **plus** the slow-decay
-recipe determined in M0 (typically PWM one side / HIGH other, inverted duty —
-depends on the H-bridge truth table). Mode selectable per experiment. Duty resolution
-≥10 bit at 19.5 kHz.
+### R3 — Drive with selectable decay mode (DRV8833 confirmed)
+AIN1 = GPIO11 (forward drive side, legacy `motor_2_r`), AIN2 = GPIO10, LEDC
+19531 Hz, duty resolution ≥10 bit. Torque command in [−1, 1] + mode maps to the two
+LEDC duties:
+
+| Mode | Forward (d>0) | Reverse (d<0) | Off-phase |
+|---|---|---|---|
+| FAST (legacy-style) | AIN1=PWM(d), AIN2=0 | AIN2=PWM(−d), AIN1=0 | coast (Hi-Z, body diodes) |
+| SLOW | AIN1=100 %, AIN2=PWM(1−d) | AIN2=100 %, AIN1=PWM(1+d) | brake (both low-side FETs) |
+
+Mode selectable per experiment. Bonus if the AISEN shunt gets installed (see
+probe-connections.md): with R=0.2 Ω the DRV8833's 200 mV ITRIP chops at ~1 A —
+a passive hardware current limit above the expected ~0.5 A stall; noted, not relied on.
 
 ### R4 — Safety interlocks (non-negotiable, enforced in the tick, not in the player)
 - End-zone cut: |torque| forced 0 outside position [3, 97] % unless the running
@@ -61,9 +69,10 @@ and its own timeout, usable only *between* program segments (never recorded as d
 Marked loudly in code as NOT-A-CONTROLLER.
 
 ### R8 — Scope sync
-One GPIO (pin TBD on the rig): HIGH during an experiment program, plus a 1 ms LOW
-blip at every segment boundary. Picoscope records it as a channel → sample-exact
-alignment of scope captures with CSV records.
+GPIO12: HIGH during an experiment program, plus a 1 ms LOW blip at every segment
+boundary. Goes to the PicoScope 3203D **EXT trigger input** (not a channel — the
+3203D only has two), so both analog channels stay free while every capture is
+sample-exact alignable with CSV records. See `docs/protocols/probe-connections.md`.
 
 ### R9 — Minimal HA surface
 Position sensor at ~10 Hz (sanity only), experiment-state text sensor,
