@@ -18,6 +18,7 @@ fetch = "slideranalysis.fetch:main"
 labctl = "slideranalysis.labctl:main"
 tickhealth = "slideranalysis.tickhealth:main"
 noise = "slideranalysis.noise:main"
+plantreport = "slideranalysis.plantreport:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
