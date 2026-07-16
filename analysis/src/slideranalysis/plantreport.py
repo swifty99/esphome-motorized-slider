@@ -72,7 +72,9 @@ def _observer_targets(runs: list[Run]) -> list[Run]:
     names = {"47_step_response", "49_step_response", "52_step_response",
              "54_triangle", "45_step_response"}
     picked = [r for r in runs if r.basename in names
-              and r.experiment in ("step_response", "triangle")]
+              and (r.experiment == "triangle"
+                   or (r.experiment == "step_response"
+                       and abs(r.params.get("duty", 0)) >= 0.55))]
     if picked:
         return picked
     return [r for r in runs if r.experiment == "step_response"
@@ -125,6 +127,17 @@ def main(argv=None) -> int:
           "negligible vs sigma0")
     for n in sensor.notes:
         print(f"  NOTE: {n}")
+    mrows = sensorfit.mode_table(npoints)
+    if any(r[0] == "slow" for r in mrows):
+        print("  coupling by decay mode (median over stalled segments):")
+        print(f"    {'mode':>6s} {'duty':>5s} {'n':>3s} {'pos':>5s} {'sigma':>6s} {'p-p':>6s}")
+        for mode, d, n, pos, sig, ptp in mrows:
+            print(f"    {mode:>6s} {d:5.2f} {n:3d} {pos:5.0f} {sig:6.1f} {ptp:6.0f}")
+        pairs, ptp_ratio, sig_ratio = sensorfit.mode_comparison(npoints)
+        if pairs:
+            print(f"    -> SLOW/FAST on {len(pairs)} duty+position-matched pairs: "
+                  f"p-p x{ptp_ratio:.2f}, sigma x{sig_ratio:.2f} "
+                  "(recommendation: FAST decay -- couples less)")
     if not args.no_plots:
         plots.plot_sensor(npoints, sensor, out / "sensor_noise.png")
 

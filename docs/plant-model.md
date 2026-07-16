@@ -1,10 +1,10 @@
 # Plant Model — motorslider lab unit (fitted 2026-07-17, night session)
 
-Data basis: 102 runs (state 2026-07-17 ~01:15; the campaign was still adding
-data — re-run the pipeline for the final state), `data/2026-07-16/` +
-`data/2026-07-17/` (M1 noise, M2 coupling stalls, M3-degraded duty ladders,
-M4 breakaway grid 34 valid trials, M5 steps + triangles, M6 reversal pairs,
-M7 impulse ladders, unstick blips as bonus impulses). VM = 5.00 V constant,
+Data basis: 127 runs (final campaign state incl. Block 4), `data/2026-07-16/`
++ `data/2026-07-17/` (M1 noise, M2-CSV coupling grid in both decay modes,
+M3-degraded coarse + fine duty ladders, M4 breakaway grid 34 valid trials,
+M5 steps + triangles, M6 reversal pairs, M7 impulse ladders, M8 dither grid,
+unstick blips as bonus impulses). VM = 5.00 V constant,
 1 kHz tick, ADC 13-bit ×4. **No current measurements** (scope died on the USB
 bus 2026-07-16 23:xx) — everything below is in **duty units**: "force" means
 *stall-equivalent duty*, under the stated assumption that stall force ∝ duty
@@ -30,12 +30,26 @@ Position convention: % of travel from the provisional endpoint calibration
 | Quantity | Value | Source |
 |---|---|---|
 | σ per raw 13-bit sample | 18.9 counts ≈ 0.24 % | noise_floor runs 32/34/36 (s0..s3) |
-| σ of `adc_raw` (mean of 4), motor off | **8.2 counts ≈ 0.103 %** (segment spread 4.9–10.1) | 20+ unpowered stalled segments |
+| σ of `adc_raw` (mean of 4), motor off | **8.5 counts ≈ 0.108 %** (segment spread 4.9–12.5) | 30+ unpowered stalled segments |
 | whiteness | mean-of-4 = sample σ/2 holds → white at 1 kHz; PSD flat | noise.py, M1 |
-| σ of `adc_raw` under PWM (stalled) | **11.1 counts ≈ 0.140 %** pooled | pwm_coupling 05/14/27/31 + all ladder rungs ≤ 0.60 |
-| coupling model σ²(d) = σ₀² + c·\|d\| | c = 130 ± 40 counts²/duty (2σ) | 40+ stalled-PWM segments, 0.05 ≤ d ≤ 0.6 |
-| spike tail under PWM | p-p ≈ 140–260 counts (~2–3 % singles) vs 72 unpowered; the dominant PWM effect | same segments |
+| σ of `adc_raw` under PWM (stalled) | **11.3 counts ≈ 0.143 %** pooled | pwm_coupling grid + all stalled rungs |
+| coupling model σ²(d) = σ₀² + c·\|d\| | c = 121 ± 27 counts²/duty (2σ) | 60+ stalled-PWM segments, 0.05 ≤ d ≤ 0.75 |
+| spike tail under PWM | p-p ≈ 130–415 counts (~1.5–5 % singles) vs 74 unpowered; the dominant PWM effect | same segments |
 | quantization | 1 LSB raw / 0.25 counts adc_raw — negligible vs σ₀ | — |
+
+**Decay mode matters (M2-CSV grid, runs 2026-07-17/57–66, stalled at 59.7 %,
+duty 0.1–0.5 both modes):** wiper p-p spread FAST 220/218/200/224/308 counts
+vs SLOW 253/249/286/326/415 counts for duty 0.1→0.5. Over 17 duty- and
+position-matched segment pairs across the whole session: **SLOW couples 1.19×
+the p-p and 1.07× the σ of FAST, and the gap grows with duty** (at 0.5:
+SLOW ≈ 415 vs FAST ≈ 308 counts p-p). Since both L9110 modes are brake-type
+(no discontinuous-conduction linearity argument for SLOW without M3 current
+data) and the coarse ladders showed no drive advantage for SLOW (0.70 rung:
+FAST +211 %/s vs SLOW +180 %/s), **recommendation: FAST (brake-low) as the
+servo drive mode** — it is the quieter one on the only channel the servo has.
+The spike tail (not broadband σ) is the dominant coupling artifact in both
+modes → the M2 RC-filter recipe (~100 nF at the ADC pin) remains the design
+candidate; final RC decision still needs the scope (spike waveform, M2).
 
 Consequences: any threshold on per-tick position (movement detectors!) must
 sit above ~1.5 % or be median-filtered — the firmware breakaway detector
@@ -72,6 +86,29 @@ Plot: `docs/findings/friction_static_map.png`.
 - Global safe planning values: **fwd breakaway ≤ 0.72 everywhere; rev ≤ 0.79
   everywhere** (max observed + margin). Legacy 0.42 is confirmed dead wrong.
 
+### 2b. The duty→velocity CLIFF (fine ladders, Block 4)
+
+0.02-duty ladders (`2026-07-17/45` fwd from ~21 %, `48` rev from ~80 %,
+800 ms rungs, FAST mode), pipeline-verified rung velocities:
+
+| duty | 0.60 | 0.62 | 0.64 | 0.66 | 0.68 | 0.70 |
+|---|---|---|---|---|---|---|
+| fwd v [%/s] | +0.7* | +0.3 | +0.2 | +0.5 | **+120 (flies)** | (zone-parked) |
+| rev v [%/s] | −0.0 | −0.0 | −0.0 | +0.0 | −0.0 | **−104 (flies)** |
+
+(*first rung right after a goto: crept +2.7 % — breakaway is lower for
+~1 s after recent motion. Recency/dwell dependence, consistent with the
+lb>ub conflicts above.)
+
+**There is no proportional creep regime.** The stall→fly transition spans
+≤ 0.02 duty and jumps ~200× in velocity (≤1 %/s micro-creep below, ≥100 %/s
+above). Consequences: (1) velocity-mode control by duty modulation below
+~120 %/s is physically unavailable open-loop — slow motion must be
+synthesized from impulses (§4c) or closed-loop torque with the observer;
+(2) any identification scheme that hopes to measure a creep velocity vs duty
+curve is measuring noise; a binary moved/not-moved classifier at a ~5 %
+threshold is the correct primitive (auto-ident-spec #4).
+
 ## 3. Kinetic friction map, damping, inertia
 
 Fitted jointly (linear LSQ, honest covariance) on ~15k sliding samples
@@ -89,8 +126,8 @@ u = m·a + b·v + sign(v)·F_k(p, dir), node grid every 10 %:
 | Parameter | Value | Uncertainty | Notes |
 |---|---|---|---|
 | b (viscous + brake damping) | **5.5e-4 duty/(%/s)** | ±0.2e-4 (2σ statistical); drifted 5.1→5.5e-4 as data grew — treat as ±10 % | includes electrodynamic braking — L9110 duty 0 = motor shorted; b is NOT pure mechanics |
-| m (inertia equivalent), LSQ | 1.70e-5 duty/(%/s²) | ±0.03e-5 (2σ) **plus systematic** | 40 Hz smoothing smears transients → biased |
-| m, sim-refined (position-domain, first 150 ms of 28 transients) | **1.24e-5 duty/(%/s²)** | objective-within-20 % range **[0.5, 2.3]e-5** | the honest statement: τ = m/b ≈ 15–40 ms; M7 short-pulse travels suggest the true value sits in the lower half |
+| m (inertia equivalent), LSQ | 1.67e-5 duty/(%/s²) | ±0.02e-5 (2σ) **plus systematic** | 40 Hz smoothing smears transients → biased |
+| m, sim-refined (position-domain, first 150 ms of 39 transients) | **1.22e-5 duty/(%/s²)** | objective-within-20 % range **[0.4, 1.8]e-5** | the honest statement: τ = m/b ≈ 10–35 ms; M7 short-pulse travels suggest the true value sits in the lower half |
 | residual RMS | **0.14 duty** | — | model error incl. stick-slip texture; this is the number the observer's process noise is built from |
 | corr(m, b) | −0.01 | — | not degenerate thanks to coast/brake samples |
 
@@ -132,11 +169,11 @@ Validation = overlay: recorded duty trace in, simulated vs recorded position
 | Class | Runs | Position RMSE | Verdict |
 |---|---|---|---|
 | Step responses 0.6–0.8 (45/46/47/52) | 4 | **0.6–3.0 %** | GOOD |
-| Duty ladders (38/43, 26 s each) | 2 | **1.6–2.6 %** | GOOD incl. 0.70 flight + end-zone cut |
+| Coarse duty ladders (38/43, 26 s each) | 2 | **1.6–2.6 %** | GOOD incl. 0.70 flight + end-zone cut |
 | Triangles (54/56) | 2 | 3.5–4.3 % (max 22–27 % during onset) | onset duty matches; creep phase off by design |
 | Unstick blips + M4/M6 recovery dithers | 25 | **0.3–8 %**, median ≈ 1.7 % | GOOD; sim travels ~10 % farther than measured on the 98 %-start blips |
 | Impulse ladders (41/42 fine+rev) | 2 | 0.8–1.3 % | GOOD; per-pulse comparison in the M7 table below |
-| **Failures, explained** | 49: RMSE 19.8 (sim never breaks away at 0.7 rev from 80 — conservative F_s est vs. real trial-to-trial spread); 50: 13–16 (0.8 fwd real flies ~500 %/s, sim ~430 → cut arrives early); 39: 13.1 (endzone parking mid-run); 07/26: 21–26 (early endstop_safe runs at the extreme rails, outside the map's supported region); 09: max 53 (early run, unclear state) | | |
+| **Failures, explained** | 49: RMSE 19.8 and fine ladder 48: 44.9 (sim refuses marginal rev drives 0.70 from 80 — conservative F_s est vs. the real ±0.04 trial spread); fine ladder 45: 7.1 (sim breaks 1–2 rungs before the real 0.68 cliff, same spread); 50: 12–16 (0.8 fwd real flies ~500 %/s, sim ~430 → cut arrives early); 39: 13.1 (endzone parking mid-run); 07/26: 21–26 (early endstop_safe runs at the extreme rails, outside the map's supported region); 09: max 53 (early run, unclear state) | | |
 
 **Stated tolerance: for drives ≥ 0.75 |duty| and starts inside 5–95 % the
 model predicts position to ~1–3 % RMSE over full moves; for marginal drives
@@ -178,6 +215,29 @@ Repeatability within triples: ~±10–15 % of travel. The sim under-predicts by
 on-device auto-ident can reproduce (auto-ident-spec #8). Note the fwd/rev
 asymmetry (rev needs ~1.3× the width for the same travel below 30 ms).
 
+## 4d. M8 dither: breakaway law (objective part)
+
+Dither grid (square dither on a slowly ramped base duty, own undithered
+baseline per run; Block-2 detector recipe; `2026-07-17/52–56`):
+
+| point | baseline breakaway | dithered base at breakaway | Δbase | base+amp |
+|---|---|---|---|---|
+| 20 % fwd, 100 Hz / 0.10 | 0.648 | 0.576 | 0.072 | 0.676 |
+| 20 % fwd, 100 Hz / 0.20 | 0.696 | 0.474 | 0.222 | 0.674 |
+| 20 % fwd, 200 Hz / 0.10 | 0.672 | 0.576 | 0.096 | 0.676 |
+| 65 % rev, 100 Hz / 0.10 | 0.690 | 0.624 | 0.066 | 0.724 |
+| 65 % rev, 100 Hz / 0.20 | 0.666 | 0.510 | 0.156 | 0.666 |
+
+**Law: breakaway occurs when base + amplitude reaches the undithered
+threshold** (peak duties 0.666–0.724 vs baselines 0.648–0.696, within the
+±0.04 trial spread). Dither buys base-duty headroom ≈ its amplitude — no
+super-additive "vibration lubrication" effect at 100/200 Hz. Implications:
+dither does NOT soften the cliff (the peak still crosses the same threshold);
+what it offers is a *lower average torque* while waiting at the edge, i.e. a
+knob for the impulse endgame to sit closer to breakaway without moving.
+Whether it is audible (the reason M8 exists) is Jan's morning item — until
+then dither stays optional in the controller design.
+
 ## 5. Observer (Phase-3 item 3)
 
 2-state EKF (position, velocity), prediction = this plant model driven by
@@ -216,7 +276,9 @@ is qualitative.
    current sensor + thresholds; slow-decel experiments are the next lever.
    The 55–80 % rev sustain failure is mapped but only qualitatively modeled.
    The sim also omits the measured 0.3–1.3 % post-pulse creep (§4c).
-4. **Decay-mode factor**: FAST/SLOW pooled (~15 % speed difference at 0.70).
+4. **Decay-mode factor**: FAST/SLOW pooled in the kinetic fit (~15 % speed
+   difference at 0.70). Mode DECISION is made on sensor-noise grounds (§1:
+   FAST); per-mode torque linearity remains an M3/scope item.
 5. **Position calibration**: provisional endpoints (raw 8000/100); device
    self-cal will shift the % scale slightly; maps should be refit after.
 6. **ADC spike source**: 2–3 % single-tick spikes under PWM — coupling
@@ -231,9 +293,12 @@ Sim-checked recipes (`plantsim`, parameters above). Two regimes:
 **(a) Kick + cruise (the "obvious" profile) — DO NOT USE OPEN-LOOP.**
 Kick 0.80/40 ms breaks away reliably, but cruising at 0.64–0.68 rides on
 (u − F_k) ≈ 0.06–0.10 duty, and F_k's run-to-run spread is ±10 %≈0.06:
-sim sensitivity shows landing 96 % vs 52 % for ±10 % friction. Near-breakaway
-cruise is open-loop-hopeless on this plant — this is *why* the servo needs
-the observer, not a finding against the plan.
+sim sensitivity shows landing 96 % vs 52 % for ±10 % friction. The Block-4
+fine ladders make this final: the duty→velocity map is a CLIFF (§2b — ≤1 %/s
+through 0.66, ≥100 %/s at 0.68), so there is no duty value that produces a
+moderate open-loop cruise speed at all. Near-breakaway cruise is
+open-loop-hopeless on this plant — this is *why* the servo needs the
+observer, not a finding against the plan.
 
 **(b) Calibrated impulse moves — GO, now on MEASURED data.**
 Fixed-amplitude pulses at |duty| = 0.8, torque 0 after: travel is set by

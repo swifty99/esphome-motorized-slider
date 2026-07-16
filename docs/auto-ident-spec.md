@@ -25,10 +25,15 @@ method, and the storage.
    same refit the offline pipeline does.
 3. **Prefer fits that are sums, not matrices.** Everything below reduces to
    medians/linear 2×2 solves — no least squares library on the ESP32 needed.
-4. **Respect the duty budget**: ≤ 0.5 average |duty| per 10 s (thermal
+4. **The duty→velocity map is a cliff, exploit it.** Fine ladders
+   (plant-model §2b) show ≤1 %/s below breakaway and ≥100 %/s one 0.02-step
+   above — there is no creep curve to measure. Breakaway ident is therefore a
+   BINARY search problem: "did it move ≥5 % within 300 ms?" is unambiguous,
+   noise-proof, and needs no velocity estimation at all.
+5. **Respect the duty budget**: ≤ 0.5 average |duty| per 10 s (thermal
    interlock stays live during ident). Full self-ident below fits in
    ~60–90 s including pauses.
-5. **Every stored parameter carries a validity stamp** (fw version, VM,
+6. **Every stored parameter carries a validity stamp** (fw version, VM,
    endpoint calibration id, date counter) — a re-cal invalidates dependents.
 
 ## Parameter table
@@ -38,7 +43,7 @@ method, and the storage.
 | 1 | Endpoint calibration (raw@0 %, raw@100 %) | provisional constants | endstop_safe slow drive to both rails, median of 200 ticks each | 6 s | 8 | YES (existing plan) |
 | 2 | Sensor σ₀ (quiet) | M1 noise_floor, 3 positions | 2 s idle recording, per-tick |x−median|, store MAD·1.48 | 2 s | 4 | **YES** — same math |
 | 3 | Sensor σ under PWM + spike rate | stalled pwm_coupling + ladder rungs | 2 s stall at duty 0.30 (below any observed breakaway... use 0.45 cap), same MAD + count of >5σ ticks | 2 s | 8 | **YES** |
-| 4 | Breakaway map F_s(p, dir), 5–7 positions × 2 dir × 2 reps | M4 breakaway_grid + offline onset refit | same experiment in firmware with principles 1+2 baked in; store per-point onset duty; map = per-position max over reps + 0.03 margin | ~40 s incl. pauses | 2×7×2 = 28 | **YES** — this is the flagship on-device ident |
+| 4 | Breakaway map F_s(p, dir), 5–7 positions × 2 dir × 2 reps | M4 breakaway_grid ramps + offline onset refit; fine ladders 45/48 established the cliff | **coarse bracket + step probes, NOT a fine ramp** (see below): discrete 300 ms holds from 0.60 upward in 0.03 steps until the binary moved-≥5 % classifier fires; first hit = F_s within +0.03; 2 reps beat finer steps (trial spread is ±0.04 anyway) | ~25 s incl. pauses (was ~40 s as ramps) | 2×7×2 = 28 | **YES** — this is the flagship on-device ident |
 | 5 | Sustain flag per point (Stribeck/band map) | M4 hold_dpos analysis | after breakaway, hold 50 ms, store "sustained ≥ 3 %?" bit; bands with re-stick get the FF "no marginal cruise" flag | free (same runs) | 2 | **YES** |
 | 6 | Kinetic level + damping (F_k mid, b) per direction | 13k-sample LSQ over all runs | 2 steady flights per direction mid-travel (e.g. 0.72 and 0.80, 25→75 %): terminal v from last-40-ms slope → 2×2 solve: u = F_k + b·v | 4 runs ≈ 8 s | 16 | **PARTIAL** — device gets mid-travel level + b; the 11-node position map stays an offline product |
 | 7 | Inertia m | sim-domain refit, located only ×3 | **skip on device.** τ = m/b ≈ 15–40 ms ≪ any move; FF/observer tolerate the offline default. If ever needed: coast-stop distance after duty cut at known v | — | 4 (default) | NO — and doesn't need to be |
@@ -47,14 +52,31 @@ method, and the storage.
 | 10 | Torque constant K, motor R | M3 with shunt + scope | **design-time only** — per-family constant, not per-unit | — | in firmware image | NO by design |
 | 11 | PWM coupling waveform / ADC INL | scope | design-time only | — | — | NO by design |
 
+| 12 | Dither headroom (optional) | M8 dither_grid: Δbase ≈ amplitude, law holds at 100/200 Hz both directions (plant-model §4d) | law appears universal → nothing to identify per unit; if the controller uses dither, one confirmation probe (dithered bracket at one amp) validates the stored F_s map instead | (3 s if run) | 0 | YES (as a check; audibility decision is Jan's, not the device's) |
+
 Total per-unit NVS: **≈ 90 bytes + stamps** — trivial.
+
+### Why step probes instead of a ramp (learned from Block 4)
+
+The continuous ramp (+0.005/20 ms) was designed to catch a creep onset — but
+the plant has no creep regime (cliff, principle 4). A ramp therefore (a)
+wastes time crawling through duties that provably do nothing, (b) logs a
+termination duty biased late by the detector latency (+0.05 observed), and
+(c) needs the onset refit of principle 2 to undo that bias. Discrete
+settled probes with a binary classifier have none of these problems: each
+probe is an independent, unbiased sample of "F_s ≤ d?", the resolution is the
+step size (0.03 ≈ the physical trial spread — finer is pointless), and only
+the LAST probe moves the slider (one flight + one reposition per point).
+Bisection would save ~1 probe over the linear bracket but costs extra flights
+when probing above threshold; the linear upward bracket is the cheapest
+in moves, which is what wears the motor.
 
 ## Suggested sequence (one `self_ident` firmware program)
 
 1. Endpoint cal (needs endstop_safe) → 2. σ₀ quiet → 3. σ_PWM stall →
-4. breakaway grid 7×2×2 with onset ring-buffer → 5. two-duty flights fwd/rev
-(→ F_k, b) → 6. impulse table → write NVS + stamp. Budget ~90 s, ~25 moves,
-all inside interlocks. Abort rule: any step failing its own sanity check
+4. breakaway step-probe bracket 7×2×2 (binary moved-≥5 % classifier, 0.03
+steps from 0.60) → 5. two-duty flights fwd/rev (→ F_k, b) → 6. impulse table
+→ write NVS + stamp. Budget ~75 s, ~25 moves, all inside interlocks. Abort rule: any step failing its own sanity check
 (e.g. breakaway onset < 0.3 or > 0.9) marks the whole set invalid and keeps
 the previous stamp.
 

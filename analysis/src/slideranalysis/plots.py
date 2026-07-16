@@ -40,26 +40,33 @@ def plot_sensor(points, model, out):
     import matplotlib.pyplot as plt
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9.5, 3.6))
-    d = np.array([p.duty_abs for p in points])
-    sig = np.array([p.sigma_counts for p in points])
-    ptp = np.array([p.ptp_counts for p in points])
-
-    ax1.scatter(d, sig, s=22, color=BLUE, zorder=3, label="stalled segments")
-    dd = np.linspace(0, max(0.85, d.max()), 100)
-    ax1.plot(dd, [model.sigma_counts(x) for x in dd], color=ORANGE, lw=2,
-             label=r"model $\sqrt{\sigma_0^2 + c\,|d|}$")
+    groups = (  # decay mode is a real coupling factor (M2-CSV grid)
+        ("fast", BLUE, "FAST mode / unpowered"),
+        ("slow", ORANGE, "SLOW mode"),
+    )
+    dd = np.linspace(0, max([0.85] + [p.duty_abs for p in points]), 100)
+    for mode, color, label in groups:
+        pts = [p for p in points if p.mode == mode]
+        if not pts:
+            continue
+        d = np.array([p.duty_abs for p in pts])
+        ax1.scatter(d, [p.sigma_counts for p in pts], s=22, color=color,
+                    zorder=3, label=label)
+        ax2.scatter(d, [p.ptp_counts for p in pts], s=22, color=color,
+                    zorder=3, label=label)
+    ax1.plot(dd, [model.sigma_counts(x) for x in dd], color=INK2, lw=2,
+             label=r"pooled model $\sqrt{\sigma_0^2 + c\,|d|}$")
     ax1.legend(fontsize=8, frameon=False)
     _style(ax1, "adc_raw noise vs duty (stalled)", "|duty|", r"$\sigma$ [counts]")
-    ax1.set_ylim(0, max(sig.max(), 14) * 1.15)
+    ax1.set_ylim(0, max(max(p.sigma_counts for p in points), 14) * 1.15)
 
-    ax2.scatter(d, ptp, s=22, color=BLUE, zorder=3, label="peak-to-peak")
     ax2.axhline(model.ptp0_counts or 0, color=INK2, lw=1, ls="--")
     ax2.annotate("unpowered p-p", xy=(dd[-1], model.ptp0_counts or 0),
                  xytext=(0, 4), textcoords="offset points",
                  ha="right", fontsize=8, color=INK2)
     ax2.legend(fontsize=8, frameon=False)
     _style(ax2, "PWM spike tail (p-p, same segments)", "|duty|", "p-p [counts]")
-    ax2.set_ylim(0, ptp.max() * 1.15)
+    ax2.set_ylim(0, max(p.ptp_counts for p in points) * 1.15)
     fig.tight_layout()
     fig.savefig(out, dpi=130)
     plt.close(fig)

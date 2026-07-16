@@ -112,6 +112,9 @@ def _classify_active_segment(s: Segment, direction: int, d: float,
     if abs(dpos) < STALL_DPOS:
         if span > 3.0:
             return  # ambiguous (moved out and back, or dense spikes): no evidence
+        driven = float(np.mean(np.abs(s.duty) > 0.01))
+        if driven < 0.9:
+            return  # torque was cut (end-zone interlock): not a real hold
         if s.n >= MIN_HOLD_TICKS:
             out.append(StaticEvidence("stall", direction, d, float(np.median(s.pos)),
                                       None, src, f"held {s.n} ms, no motion"))

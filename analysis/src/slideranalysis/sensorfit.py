@@ -42,6 +42,7 @@ class NoisePoint:
     sigma_counts: float       # std of adc_raw, linearly detrended
     ptp_counts: float
     spike_frac: float         # fraction of ticks with |dev| > 5*sigma0
+    mode: str = "fast"        # decay mode ("fast"/"slow"); firmware default fast
 
 
 @dataclass
@@ -92,12 +93,21 @@ def collect_noise_points(runs: list[Run], sigma0_hint: float = 8.5) -> list[Nois
                                   "step_response", "breakaway_grid", "reversal"):
             continue
         for s in split_segments(run):
-            if s.goto or s.n < MIN_STALL_TICKS:
+            if s.goto or s.n < MIN_STALL_TICKS or s.endzone_ticks > 0:
                 continue
             d = s.duty_const
-            if d is None or abs(s.dpos) > STALL_DPOS_PCT:
+            if d is None:
                 continue
-            if float(np.ptp(s.pos)) > 4.0 * STALL_DPOS_PCT:  # excursions = motion
+            k = min(100, s.n // 4)
+            net = abs(float(np.median(s.pos[-k:])) - float(np.median(s.pos[:k])))
+            if net > STALL_DPOS_PCT:
+                continue
+            # motion guard must be SPIKE-ROBUST: the spikes are the very
+            # signal being characterized (up to ~5 % p-p singles in slow
+            # decay) -- judge motion on a rolling median, not raw p-p
+            med5 = np.array([np.median(s.pos[max(0, i - 2):i + 3])
+                             for i in range(0, s.n, 5)])
+            if float(np.ptp(med5)) > 4.0 * STALL_DPOS_PCT:  # real excursion
                 continue
             sigma = _detrended_sigma(s.adc, s.t)
             dev = np.abs(s.adc - np.median(s.adc))
@@ -107,9 +117,57 @@ def collect_noise_points(runs: list[Run], sigma0_hint: float = 8.5) -> list[Nois
                     pos_pct=float(np.median(s.pos)), n=s.n,
                     sigma_counts=sigma, ptp_counts=float(np.ptp(s.adc)),
                     spike_frac=float(np.mean(dev > 5.0 * sigma0_hint)),
+                    mode=str(run.params.get("mode", "fast")),
                 )
             )
     return pts
+
+
+def mode_table(points: list[NoisePoint]):
+    """Powered points grouped by (mode, duty): decay-mode coupling comparison.
+
+    Returns rows (mode, duty, n_segments, pos_median, sigma_median,
+    ptp_median). Feeds the Phase-2 decay-mode decision: on the 2026-07-17
+    M2-CSV grid, SLOW couples markedly more wiper noise than FAST and it
+    grows with duty.
+    """
+    rows = []
+    powered = [p for p in points if p.duty_abs > 0.0]
+    for mode in sorted({p.mode for p in powered}):
+        duties = sorted({round(p.duty_abs, 2) for p in powered if p.mode == mode})
+        for d in duties:
+            grp = [p for p in powered
+                   if p.mode == mode and round(p.duty_abs, 2) == d]
+            rows.append((mode, d, len(grp),
+                         float(np.median([p.pos_pct for p in grp])),
+                         float(np.median([p.sigma_counts for p in grp])),
+                         float(np.median([p.ptp_counts for p in grp]))))
+    return rows
+
+
+def mode_comparison(points: list[NoisePoint], pos_tol: float = 10.0):
+    """SLOW/FAST pairs matched on duty AND position (coupling depends on the
+    wiper position -- source impedance varies along the track; comparing a
+    15 %-position FAST rung with a 60 %-position SLOW run would be biased).
+
+    Returns (pairs, ptp_ratio_mean, sigma_ratio_mean); pairs are
+    (duty, pos, ptp_fast, ptp_slow)."""
+    fast = [p for p in points if p.duty_abs > 0 and p.mode == "fast"]
+    slow = [p for p in points if p.duty_abs > 0 and p.mode == "slow"]
+    pairs = []
+    for s in slow:
+        cands = [f for f in fast
+                 if abs(f.duty_abs - s.duty_abs) < 0.011
+                 and abs(f.pos_pct - s.pos_pct) <= pos_tol]
+        if cands:
+            f = min(cands, key=lambda f: abs(f.pos_pct - s.pos_pct))
+            pairs.append((s.duty_abs, s.pos_pct, f.ptp_counts, s.ptp_counts,
+                          f.sigma_counts, s.sigma_counts))
+    if not pairs:
+        return [], float("nan"), float("nan")
+    ptp_ratio = float(np.mean([p[3] / p[2] for p in pairs]))
+    sig_ratio = float(np.mean([p[5] / p[4] for p in pairs]))
+    return pairs, ptp_ratio, sig_ratio
 
 
 def fit_sensor(runs: list[Run]) -> tuple[SensorModel, list[NoisePoint]]:
