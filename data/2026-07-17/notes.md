@@ -122,3 +122,59 @@
   #16 `30_` 98.1->65.2 | #17 `32_` 98.2->63.9 | #18 `34_` 2.2->50.0 | #19 `36_` 2.4->49.7
   #20 `38_` 98.1->66.0 | #21 `40_` 98.0->67.8
 - Scope: still off USB at block start (VID 0x0CE9 absent, checked once). No thermal ticks all block.
+- 2026-07-17 00:43 `44_step_response.csv`: Block 4: reposition to 20 % (fine ladder fwd runway)
+- 2026-07-17 00:44 `45_duty_ladder.csv`: Block 4: FINE duty ladder fwd 0.60-0.70/0.02 from ~21 %, VM 5.00 V
+- 2026-07-17 00:45 `46_dither.csv`: Block 4 UNSTICK #22 attempt 1: -0.78/120ms out of high zone (97.9 %) after fwd fine ladder
+- 2026-07-17 00:45 `47_step_response.csv`: Block 4: reposition to 80 % (fine ladder rev runway)
+- 2026-07-17 00:46 `48_duty_ladder.csv`: Block 4: FINE duty ladder rev 0.60-0.74/0.02 from ~80 %, VM 5.00 V
+- 2026-07-17 00:46 `49_dither.csv`: Block 4 UNSTICK #23 attempt 1: +0.78/120ms out of LOW zone (2.9 %) after rev fine ladder
+- 2026-07-17 00:48 `50_dither_grid.csv`: Block 4 M8: dither grid 100Hz/0.10 pos 50 fwd (with baseline), VM 5.00 V
+- 2026-07-17 00:49 `51_dither.csv`: Block 4 UNSTICK #24 attempt 1: -0.78/120ms out of high zone (97.9 %) after dither_grid 50
+- 2026-07-17 00:50 `52_dither_grid.csv`: Block 4 M8: dither grid 100Hz/0.10 pos 20 fwd RERUN (50 lost dithered half to zone), VM 5.00 V
+- 2026-07-17 00:51 `53_dither_grid.csv`: Block 4 M8: dither grid 100Hz/0.20 pos 20 fwd, VM 5.00 V
+- 2026-07-17 00:52 `54_dither_grid.csv`: Block 4 M8: dither grid 200Hz/0.10 pos 20 fwd, VM 5.00 V
+- 2026-07-17 00:53 `55_dither_grid.csv`: Block 4 M8: dither grid 100Hz/0.10 pos 65 BAND rev, VM 5.00 V
+- 2026-07-17 00:54 `56_dither_grid.csv`: Block 4 M8: dither grid 100Hz/0.20 pos 65 BAND rev, VM 5.00 V
+- 2026-07-17 00:55 `57_pwm_coupling.csv`: Block 4 M2-CSV: coupling fast duty 0.1, 10s stall, VM 5.00 V
+- 2026-07-17 00:56 `58_pwm_coupling.csv`: Block 4 M2-CSV: coupling fast duty 0.2, 10s stall, VM 5.00 V
+- 2026-07-17 00:57 `59_pwm_coupling.csv`: Block 4 M2-CSV: coupling fast duty 0.3, 10s stall, VM 5.00 V
+- 2026-07-17 00:58 `60_pwm_coupling.csv`: Block 4 M2-CSV: coupling fast duty 0.4, 10s stall, VM 5.00 V
+- 2026-07-17 00:59 `61_pwm_coupling.csv`: Block 4 M2-CSV: coupling fast duty 0.5, 9s stall, VM 5.00 V
+- 2026-07-17 00:59 `62_pwm_coupling.csv`: Block 4 M2-CSV: coupling slow duty 0.1, 10s stall, VM 5.00 V
+- 2026-07-17 01:00 `63_pwm_coupling.csv`: Block 4 M2-CSV: coupling slow duty 0.2, 10s stall, VM 5.00 V
+- 2026-07-17 01:01 `64_pwm_coupling.csv`: Block 4 M2-CSV: coupling slow duty 0.3, 10s stall, VM 5.00 V
+- 2026-07-17 01:02 `65_pwm_coupling.csv`: Block 4 M2-CSV: coupling slow duty 0.4, 10s stall, VM 5.00 V
+- 2026-07-17 01:03 `66_pwm_coupling.csv`: Block 4 M2-CSV: coupling slow duty 0.5, 9s stall, VM 5.00 V
+
+## Block 4 (campaign-runner, FINAL measurement block: fine ladders + M8 dither + M2-CSV coupling, 02:3x-03:2x, VM = 5.00 V)
+- FINE DUTY LADDERS (0.02 steps, step_ms 800, pause 700, mode fast; duty -> velocity map):
+  `45_duty_ladder.csv` FWD from ~21 %: 0.60 +3.4 %/s (first rung, warm from goto) | 0.62 +0.36 |
+  0.64 +0.88 | 0.66 +0.91 | 0.68 +127 %/s FLIES | 0.70 rung lost (zone park 97.9, WARN).
+  `48_duty_ladder.csv` REV from ~80 %: 0.60 -0.72 | 0.62 -0.40 | 0.64 -0.26 | 0.66/0.68 DEAD
+  STALL (0.0) | 0.70 -91 %/s FLIES (79.5 -> 6.6) | 0.72/0.74 zone-cut (WARN).
+  => The stall->fly transition is a cliff, ~0.66->0.68 fwd and ~0.68->0.70 rev; the creep window
+  is <= 1 %/s wide in duty terms. Feedforward design implication: there is effectively NO usable
+  proportional creep regime; position control must be impulse-based (see M7 nudge table).
+- M8 DITHER (dither_grid with Block-2 detector recipe thr 5.0 / step 0.006; square dither; each
+  run has its own no-dither baseline; "dithered base" = ramp base duty at breakaway, i.e. max-amp):
+  pos 20 fwd 100 Hz/0.10: baseline 0.648 -> base 0.576 (delta 0.072)   [`52_dither_grid.csv`]
+  pos 20 fwd 100 Hz/0.20: baseline 0.696 -> base 0.474 (delta 0.222)   [`53_`]
+  pos 20 fwd 200 Hz/0.10: baseline 0.672 -> base 0.576 (delta 0.096)   [`54_`]
+  pos 65 rev 100 Hz/0.10: baseline 0.690 -> base 0.624 (delta 0.066)   [`55_`]
+  pos 65 rev 100 Hz/0.20: baseline 0.666 -> base 0.510 (delta 0.156)   [`56_`]
+  => LAW: breakaway happens when base+amp reaches the undithered breakaway (peaks 0.674-0.724
+  vs baselines 0.648-0.696) — dither reduces required BASE duty by ~its amplitude, no
+  super-additive effect at 100/200 Hz. Objective part done; audibility = Jan's morning item.
+  `50_dither_grid.csv`: first attempt at pos 50 fwd — baseline hold flight parked 97.9, dithered
+  half zone-cut (only baseline 0.696@51 valid); rerun from pos 20 = `52_`. WARN on 50 only.
+- M2-CSV COUPLING GRID (`57_`-`66_pwm_coupling.csv`, stall at 59.7 %, 10/9 s, all PASS):
+  wiper adc p-p spread [counts]: FAST 0.1/0.2/0.3/0.4/0.5 = 220/218/200/224/308
+                                 SLOW 0.1/0.2/0.3/0.4/0.5 = 253/249/286/326/415
+  (idle noise floor reference: 93-100 counts, Block 1). SLOW decay couples markedly more noise
+  into the wiper and grows with duty; FAST is flat until it jumps at 0.5. Both modes complete.
+- Repositioning: `44_`, `47_step_response.csv` (zero-duty gotos to 20/80). UNSTICK uses
+  #22 `46_dither.csv` 97.9 -> 66.4 | #23 `49_` 2.9 -> 51.3 | #24 `51_` 97.9 -> 66.7
+  (all attempt-1 success, protocol unchanged).
+- All runs tickhealth structurally clean (0 missed / 0 dup); zero thermal ticks; no reboot all
+  night. Scope: still off USB at block start (VID 0x0CE9 absent — morning replug item).
+- Rig end state: player idle, position 59.5 %, mid-travel — left quiet as instructed.
