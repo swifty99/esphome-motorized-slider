@@ -41,6 +41,11 @@ api:
 ota:
   - platform: esphome
 
+# fast-iteration loop guard: a build that crash-loops at boot must not brick
+# OTA -- after repeated failed boots the device comes up in safe mode (WiFi +
+# OTA only, no slider_lab tick) and stays flashable.
+safe_mode:
+
 # NOTE: do NOT add ESPHome's web_server here — slider_lab runs its own
 # esp_http_server on port 80 for GET /lab/dump.csv.
 slider_lab:

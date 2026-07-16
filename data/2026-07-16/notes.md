@@ -1,2 +1,9 @@
 - 2026-07-16 18:27 `01_noise_floor.csv`: gate run: quiet noise_floor (no API clients during recording), fw with integer-formatter dump fix, USB-powered from Mac, no scope
 - 2026-07-16 18:41 `02_noise_floor.csv`: v3 gate evidence (GPTimer + tick task prio 24): 5 quiet runs, 52490 intervals, 0 structural missed/dup, max jitter 115us, tick_us p99 418us
+- 2026-07-16 19:42 `03_pwm_coupling.csv`: session 1: pwm_coupling 0.2 fwd fast for alignment proof, knob ~38.5%, rig on PSU
+- 2026-07-16 19:55 `05_pwm_coupling.csv`: alignment run captured on scope as 04_alignment_scope.npz (trigger B shunt 25mV rising)
+- 2026-07-16 20:10 `07_triangle.csv`: stall-verification triangle run, scope saw flat shunt
+- 2026-07-16 20:37 `09_step_response.csv`: shunt check run: scope 08, wiper twitch only
+- 2026-07-16 20:43 `11_noise_floor.csv`: preflight actuation blip
+- 2026-07-16 20:48 `12_dither.csv`: labctl: endstop_safe nudge out of the end zone before preflight
+- 2026-07-16 20:48 `13_dither.csv`: preflight actuation blip

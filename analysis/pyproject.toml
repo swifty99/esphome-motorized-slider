@@ -10,10 +10,12 @@ dependencies = [
     "pandas>=2.2",
     "matplotlib>=3.8",
     "requests>=2.31",
+    "aioesphomeapi>=32",
 ]
 
 [project.scripts]
 fetch = "slideranalysis.fetch:main"
+labctl = "slideranalysis.labctl:main"
 tickhealth = "slideranalysis.tickhealth:main"
 noise = "slideranalysis.noise:main"
 
