@@ -71,3 +71,57 @@
   by hand in the morning.
 - Anomaly for the modeler: breakaway at 15 % needed >= 0.65 duty; bench earlier saw 0.55 creep /
   0.7 fly at mid-travel — consistent with strong position-dependence of stiction.
+- 2026-07-16 23:40 `40_dither.csv`: Block 1 UNSTICK #1 attempt 1: endstop_safe blip -0.78/120ms out of high end zone (98.0 %), per coordinator unstick protocol
+- 2026-07-16 23:41 `41_step_response.csv`: Block 1: zero-duty goto reposition to 15 % (slow ladder runway)
+- 2026-07-16 23:42 `42_step_response.csv`: Block 1: reposition retry with goto_duty 0.8 (0.72 goto stalled at 75 %)
+- 2026-07-16 23:43 `43_duty_ladder.csv`: Block 1: duty ladder SLOW mode, fwd from ~15.8 %, rungs 0.05-0.70, VM 5.00 V
+- 2026-07-16 23:43 `44_dither.csv`: Block 1 UNSTICK #2 attempt 1: endstop_safe blip -0.78/120ms out of high end zone (98.1 %) after slow ladder
+- 2026-07-16 23:44 `45_step_response.csv`: Block 1 M5: step 0.6 fwd from 20 %, VM 5.00 V
+- 2026-07-16 23:45 `46_step_response.csv`: Block 1 M5: step 0.6 rev from 80 %, VM 5.00 V
+- 2026-07-16 23:46 `47_step_response.csv`: Block 1 M5: step 0.7 fwd from 20 %, VM 5.00 V
+- 2026-07-16 23:46 `48_dither.csv`: Block 1 UNSTICK #3 attempt 1: endstop_safe blip -0.78/120ms out of high end zone (97.6 %) after 0.7 fwd step
+- 2026-07-16 23:46 `49_step_response.csv`: Block 1 M5: step 0.7 rev from 80 %, VM 5.00 V
+- 2026-07-16 23:47 `50_step_response.csv`: Block 1 M5: step 0.8 fwd from 20 %, VM 5.00 V
+- 2026-07-16 23:48 `51_dither.csv`: Block 1 UNSTICK #4 attempt 1: endstop_safe blip -0.78/120ms out of high end zone (97.7 %) after 0.8 fwd step
+- 2026-07-16 23:48 `52_step_response.csv`: Block 1 M5: step 0.8 rev from 80 %, VM 5.00 V
+- 2026-07-16 23:48 `53_dither.csv`: Block 1 UNSTICK #5 attempt 1: endstop_safe blip +0.78/120ms out of LOW end zone (2.5 %) after 0.8 rev step
+- 2026-07-16 23:49 `54_triangle.csv`: Block 1: triangle FAST mode, peak 0.8, ramp 3 s, fwd from 20 %, VM 5.00 V
+- 2026-07-16 23:50 `55_dither.csv`: Block 1 UNSTICK #6 attempt 1: endstop_safe blip -0.78/120ms out of high end zone (98.1 %) after triangle fast
+- 2026-07-16 23:51 `56_triangle.csv`: Block 1: triangle SLOW mode, peak 0.8, ramp 3 s, fwd from 20 %, VM 5.00 V
+- 2026-07-16 23:51 `57_dither.csv`: Block 1 UNSTICK #7 attempt 1: endstop_safe blip -0.78/120ms out of high end zone (98.1 %) after triangle slow — leaves rig mid-travel for Block 2
+
+## Block 1 COMPLETION (campaign-runner, after coordinator gate: unstick protocol authorized, 23:5x-00:2x, VM = 5.00 V)
+- CORRECTION to the previous entry: the failed-goto evidence run is `39_step_response.csv`
+  (not 37; `37_step_response.csv` was the successful reposition to 15.1 % before the fast ladder).
+- UNSTICK PROTOCOL uses (all: dither endstop_safe, amp 0, |bias| 0.78, 120 ms, 1 attempt each,
+  all landed in [5,95] = success; all other interlocks live, VERDICT PASS each):
+  - #1 `40_dither.csv` 98.0 -> 75.0 % (frees Block 1 after fast ladder)
+  - #2 `44_dither.csv` 98.1 -> 67.6 % (after slow ladder)
+  - #3 `48_dither.csv` 97.6 -> 66.9 % (after 0.7 fwd step)
+  - #4 `51_dither.csv` 97.7 -> 68.7 % (after 0.8 fwd step)
+  - #5 `53_dither.csv` 2.5 -> 47.1 % (bias +0.78, out of LOW zone after 0.8 rev step)
+  - #6 `55_dither.csv` 98.1 -> 66.9 % (after triangle fast)
+  - #7 `57_dither.csv` 98.1 -> 66.8 % (after triangle slow; leaves rig mid-travel for Block 2)
+- Goto anomaly: default goto duty 0.72 STALLED at 75 % (`41_step_response.csv`, 4 s, only 2.8 %
+  twitch); retry with goto_duty 0.8 worked (`42_step_response.csv` -> 15.8 %). All later runs used
+  goto_duty 0.8. Static friction at ~75 % exceeds 0.72 duty — position-dependence again.
+- Duty ladder SLOW (`43_duty_ladder.csv`, fwd from 15.8 %, same rungs as 38): VERDICT WARN
+  (endzone 570 ticks at end), tickhealth PASS. Per-rung: <= 0.60 stall (|dpos| <= 0.28 %),
+  0.65 creep +3.5 %/s, 0.70 fly +180 %/s (fast mode was +211 %/s — slow decay brakes slightly).
+- M5 step responses (hold 4 s, all tickhealth PASS, structurally clean):
+  - `45_` 0.6 fwd from ~20: creep ~1 %/s, 20 -> 24.0 %. `46_` 0.6 rev from 80: full stall (79.9 %).
+  - `47_` 0.7 fwd from 20: flies, endzone cut at 97, parked 97.6 (cut = data).
+  - `49_` 0.7 rev from 80: -43 %/s for 0.5 s then RE-STUCK DEAD at 58.8 % against full 0.7 rev
+    torque for 3.5 s. Mid-travel re-stick, direction-dependent (0.7 fwd sails through the same band).
+  - `50_` 0.8 fwd from 20: flies, parked 97.7. `52_` 0.8 rev from 80: flies, 80 -> 2.5 % (low zone).
+- Triangles peak 0.8, ramp 3 s, fwd from ~20 (both WARN endzone — up-ramp launches the knob into
+  the end zone, down-ramp branch is lost there; onset data is the value):
+  - `54_triangle.csv` FAST: sustained-motion onset at duty 0.677 (pos ~25 %).
+  - `56_triangle.csv` SLOW: onset at duty 0.645 (pos ~20 %).
+- Anomalies for the modeler (position/direction dependence is the story of the night):
+  1. Breakaway fwd at 15-20 %: between 0.60 and 0.65 (ladders), triangle onset 0.65-0.68.
+  2. 0.6 fwd creeps at 20 % but 0.6 rev stalls at 80 %; 0.7 rev re-sticks at ~59 % mid-travel;
+     0.72 goto stalls at 75 %. High-friction band somewhere ~55-80 % in the rev direction?
+  3. Kinetic friction tiny once flying: 180-211 %/s at 0.7, overshoot into the end zone every time.
+- Rig end state: player idle, position 66.8 %, no reboot all block. Scope: still off USB
+  (checked once at block start per rule — VID 0x0CE9 absent).
