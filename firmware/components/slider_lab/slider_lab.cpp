@@ -233,17 +233,30 @@ void SliderLab::setup() {
   }
 
   // --- deterministic 1 kHz tick (R1) ---
-  esp_timer_create_args_t targs = {};
-  targs.callback = &SliderLab::tick_trampoline_;
-  targs.arg = this;
-  targs.dispatch_method = ESP_TIMER_TASK;
-  targs.name = "slider_lab";
-  // if a tick ever overruns, do NOT burst catch-up ticks — a gap in the t_ms
-  // series is honest, a burst would fake the timeline
-  targs.skip_unhandled_events = true;
-  if (esp_timer_create(&targs, &this->timer_) != ESP_OK ||
-      esp_timer_start_periodic(this->timer_, kTickUs) != ESP_OK) {
-    ESP_LOGE(TAG, "esp_timer start failed");
+  // Hardware GPTimer ISR -> task notification -> dedicated tick task at
+  // priority 24, ABOVE the IDF WiFi task (23). The previous esp_timer
+  // dispatch ran at task priority 22 and lost ~26 ticks/s to WiFi RX/beacon
+  // processing even on a quiet system. The ISR does nothing but notify.
+  if (xTaskCreate(SliderLab::tick_task_trampoline_, "slider_lab_tick", 4096, this, 24, &this->tick_task_) != pdPASS) {
+    ESP_LOGE(TAG, "tick task creation failed");
+    this->mark_failed();
+    return;
+  }
+  gptimer_config_t gcfg = {};
+  gcfg.clk_src = GPTIMER_CLK_SRC_DEFAULT;
+  gcfg.direction = GPTIMER_COUNT_UP;
+  gcfg.resolution_hz = 1000000;  // 1 µs resolution
+  gptimer_event_callbacks_t cbs = {};
+  cbs.on_alarm = SliderLab::timer_isr_;
+  gptimer_alarm_config_t acfg = {};
+  acfg.alarm_count = kTickUs;  // 1000 µs -> 1 kHz
+  acfg.reload_count = 0;
+  acfg.flags.auto_reload_on_alarm = true;
+  if (gptimer_new_timer(&gcfg, &this->gptimer_) != ESP_OK ||
+      gptimer_register_event_callbacks(this->gptimer_, &cbs, this) != ESP_OK ||
+      gptimer_set_alarm_action(this->gptimer_, &acfg) != ESP_OK || gptimer_enable(this->gptimer_) != ESP_OK ||
+      gptimer_start(this->gptimer_) != ESP_OK) {
+    ESP_LOGE(TAG, "GPTimer start failed");
     this->mark_failed();
     return;
   }
@@ -262,10 +275,29 @@ void SliderLab::dump_config() {
 }
 
 // ============================================================================
-// 1 kHz tick (esp_timer task) — R1: sample, interlocks, player, apply, record
+// 1 kHz tick (dedicated task, prio 24) — R1: sample, interlocks, player,
+// apply, record. NOTHING in this path may block: no logging, no allocation,
+// no flash access — deferred-event bits carry messages to loop().
 // ============================================================================
 
-void SliderLab::tick_trampoline_(void *arg) { static_cast<SliderLab *>(arg)->tick_(); }
+bool IRAM_ATTR SliderLab::timer_isr_(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *arg) {
+  // ISR: nothing but waking the tick task
+  auto *self = static_cast<SliderLab *>(arg);
+  BaseType_t hp_woken = pdFALSE;
+  vTaskNotifyGiveFromISR(self->tick_task_, &hp_woken);
+  return hp_woken == pdTRUE;
+}
+
+void SliderLab::tick_task_trampoline_(void *arg) {
+  auto *self = static_cast<SliderLab *>(arg);
+  while (true) {
+    // clear-on-exit: if the task ever runs late, missed notifications collapse
+    // into one tick — a gap in the t series is honest, a catch-up burst of
+    // duplicate ticks would fake the timeline
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    self->tick_();
+  }
+}
 
 float SliderLab::raw_to_percent_(float raw) const {
   return (kRaw0 - raw) / (kRaw0 - kRaw100) * 100.0f;

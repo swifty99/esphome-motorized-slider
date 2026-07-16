@@ -22,10 +22,14 @@
 #include "esphome/components/json/json_util.h"
 
 #include <driver/gpio.h>
+#include <driver/gptimer.h>
 #include <driver/ledc.h>
 #include <esp_adc/adc_oneshot.h>
+#include <esp_attr.h>
 #include <esp_http_server.h>
-#include <esp_timer.h>
+#include <esp_timer.h>  // esp_timer_get_time() timestamps only
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 namespace esphome {
 namespace slider_lab {
@@ -118,8 +122,13 @@ class SliderLab : public Component {
   static constexpr uint32_t EV_GOTO_TIMEOUT = 32;
   static constexpr uint32_t EV_FULL = 64;
 
-  // ---- tick path (esp_timer task, 1 kHz) ----
-  static void tick_trampoline_(void *arg);
+  // ---- tick path (dedicated task, prio 24, woken by GPTimer ISR at 1 kHz) ----
+  // esp_timer dispatch (task prio 22) sat BELOW the IDF WiFi task (23): every
+  // WiFi RX/beacon window preempted the tick (~26 gap+catch-up events/s on the
+  // bench, quiet gate run). The GPTimer ISR does nothing but notify the tick
+  // task, which outranks WiFi.
+  static bool timer_isr_(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *arg);
+  static void tick_task_trampoline_(void *arg);
   void tick_();
   float player_eval_(float pos, uint8_t &flags, bool &active_drive);
   void start_run_(Program *p, int64_t now_us);
@@ -149,7 +158,8 @@ class SliderLab : public Component {
 
   // handles
   adc_oneshot_unit_handle_t adc_{nullptr};
-  esp_timer_handle_t timer_{nullptr};
+  gptimer_handle_t gptimer_{nullptr};
+  TaskHandle_t tick_task_{nullptr};
   httpd_handle_t httpd_{nullptr};
 
   // recorder (buffer written by tick only; read by httpd only while idle)

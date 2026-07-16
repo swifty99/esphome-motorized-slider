@@ -1,1 +1,2 @@
 - 2026-07-16 18:27 `01_noise_floor.csv`: gate run: quiet noise_floor (no API clients during recording), fw with integer-formatter dump fix, USB-powered from Mac, no scope
+- 2026-07-16 18:41 `02_noise_floor.csv`: v3 gate evidence (GPTimer + tick task prio 24): 5 quiet runs, 52490 intervals, 0 structural missed/dup, max jitter 115us, tick_us p99 418us
