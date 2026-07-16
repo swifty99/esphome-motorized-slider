@@ -7,7 +7,7 @@ data, dumps CSV over HTTP. **It is not the controller.**
 Hardware (fixed): ESP32-S2 Mini (`lolin_s2_mini`, 2 MB PSRAM) — pot wiper on
 GPIO9 (ADC1 ch8, 13-bit, ATTEN_DB_12, 4 oneshot samples/tick), DRV8833
 AIN1=GPIO11 (forward side) / AIN2=GPIO10 (LEDC 19531 Hz, 12-bit), scope-sync
-on GPIO12 → PicoScope **EXT trigger**.
+on GPIO14 (as wired on the rig) → PicoScope **EXT trigger**.
 
 ## Build / flash
 
@@ -80,7 +80,7 @@ curl -o run.csv http://slider-lab.local/lab/dump.csv
 
 ## Sync pin (R8)
 
-GPIO12 → PicoScope EXT trigger: **LOW when idle**, **HIGH while a program
+GPIO14 → PicoScope EXT trigger: **LOW when idle**, **HIGH while a program
 runs**, **1 ms LOW blip at every segment boundary**. The rising edge marks
 t=0 of the run; blips align scope captures with CSV `seg` transitions to one
 tick. The post-run 500 ms recording tail happens with sync already LOW.
@@ -114,8 +114,11 @@ goto times out — grid positions default to ≤95 % to keep margin.
 - `sensor.slider_position` — ~10 Hz, provisional scaling raw 8000→0 %,
   100→100 % (inverted wiring)
 - `sensor.lab_tick_time` — diagnostic, last tick execution µs
+- `sensor.lab_uptime` — diagnostic; a reboot (= lost recording) resets it
 - `text_sensor.lab_player_state` — `idle` / `running:<name>:<segment>` /
   `settling:<name>`
 - `switch.lab_abort`, `switch.lab_raw_sample_mode`
 - `binary_sensor.lab_recording_full`
+- `binary_sensor.lab_sync_pin` — diagnostic readback of the driven sync level
+  (must be off whenever idle)
 - service `run_experiment(name, params_json)` + one button per campaign program

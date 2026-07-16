@@ -47,7 +47,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_ADC_PIN, default=9): pins.internal_gpio_input_pin_number,
             cv.Optional(CONF_AIN1_PIN, default=11): pins.internal_gpio_output_pin_number,
             cv.Optional(CONF_AIN2_PIN, default=10): pins.internal_gpio_output_pin_number,
-            cv.Optional(CONF_SYNC_PIN, default=12): pins.internal_gpio_output_pin_number,
+            cv.Optional(CONF_SYNC_PIN, default=14): pins.internal_gpio_output_pin_number,
             cv.Optional(CONF_HTTP_PORT, default=80): cv.port,
             cv.Optional(CONF_INVERT_DIRECTION, default=False): cv.boolean,
         }

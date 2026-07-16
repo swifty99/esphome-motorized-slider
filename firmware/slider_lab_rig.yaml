@@ -1,7 +1,7 @@
 # slider_lab rig — Phase-1 identification instrument (docs/lab-rig-spec.md)
 # Board: Wemos/Lolin S2 Mini (ESP32-S2, 2 MB PSRAM), ESP-IDF framework.
 # Hardware: ALPS RS60N11M9 wiper -> GPIO9 (ADC1 ch8), DRV8833 AIN1=GPIO11 /
-# AIN2=GPIO10 (LEDC 19531 Hz), scope-sync GPIO12 -> PicoScope EXT trigger.
+# AIN2=GPIO10 (LEDC 19531 Hz), scope-sync GPIO14 -> PicoScope EXT trigger.
 
 esphome:
   name: slider-lab
@@ -48,7 +48,7 @@ slider_lab:
   adc_pin: 9    # pot wiper, ADC1 ch8, 13-bit, ATTEN_DB_12, 4 samples/tick
   ain1_pin: 11  # DRV8833 AIN1 — forward drive side
   ain2_pin: 10  # DRV8833 AIN2
-  sync_pin: 12  # scope sync: HIGH while a program runs, 1 ms LOW blip per segment
+  sync_pin: 14  # scope sync (as wired on the rig): HIGH while a program runs, 1 ms LOW blip per segment
   http_port: 80
   # invert_direction: true  # set if goto() runs away from the target
 
@@ -74,6 +74,11 @@ sensor:
     update_interval: 1s
     lambda: |-
       return id(lab).get_last_tick_us();
+  # reboot detector — a crash-reboot would silently lose the recording
+  - platform: uptime
+    name: "Lab Uptime"
+    entity_category: diagnostic
+    update_interval: 10s
 
 text_sensor:
   - platform: template
@@ -87,6 +92,12 @@ binary_sensor:
     name: "Lab Recording Full"
     lambda: |-
       return id(lab).is_recorder_full();
+  # readback of the driven scope-sync level — must be OFF whenever idle
+  - platform: template
+    name: "Lab Sync Pin"
+    entity_category: diagnostic
+    lambda: |-
+      return id(lab).get_sync_level();
 
 switch:
   # R4(d): abort — torque 0 within one tick; player refuses to start while ON

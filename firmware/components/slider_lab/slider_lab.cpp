@@ -11,6 +11,7 @@
 #include "esphome/core/version.h"
 
 #include <esp_heap_caps.h>
+#include <lwip/sockets.h>
 
 namespace esphome {
 namespace slider_lab {
@@ -130,7 +131,8 @@ void SliderLab::setup() {
   // --- scope-sync pin (R8): LOW when idle ---
   gpio_config_t io = {};
   io.pin_bit_mask = 1ULL << this->sync_pin_;
-  io.mode = GPIO_MODE_OUTPUT;
+  // INPUT_OUTPUT so the driven level can be read back (scope-less sync check)
+  io.mode = GPIO_MODE_INPUT_OUTPUT;
   io.pull_up_en = GPIO_PULLUP_DISABLE;
   io.pull_down_en = GPIO_PULLDOWN_DISABLE;
   io.intr_type = GPIO_INTR_DISABLE;
@@ -216,7 +218,7 @@ void SliderLab::setup() {
   // --- HTTP dump endpoint (R6) ---
   httpd_config_t hcfg = HTTPD_DEFAULT_CONFIG();
   hcfg.server_port = this->http_port_;
-  hcfg.stack_size = 8192;
+  hcfg.stack_size = 12288;
   hcfg.max_uri_handlers = 2;
   if (httpd_start(&this->httpd_, &hcfg) == ESP_OK) {
     httpd_uri_t uri = {};
@@ -912,13 +914,23 @@ esp_err_t SliderLab::handle_dump_(httpd_req_t *req) {
     return ESP_OK;
   }
 
+  // Disable Nagle for this socket. Each httpd chunk is three writes (length
+  // line, payload, CRLF); with Nagle on, the tiny framing writes ping-pong
+  // with the client's delayed ACK — measured ~1.6 s per 4 KB chunk on the
+  // bench (2.6 KB/s). With TCP_NODELAY the dump is wire-speed.
+  const int sockfd = httpd_req_to_sockfd(req);
+  if (sockfd >= 0) {
+    int nodelay = 1;
+    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+  }
+
   const uint32_t n = this->count_.load();
   const bool raw = this->run_raw_samples_;
 
   httpd_resp_set_type(req, "text/csv");
   httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=\"dump.csv\"");
 
-  const size_t bufsz = 4096;
+  const size_t bufsz = 8192;
   char *buf = (char *) malloc(bufsz);
   if (buf == nullptr) {
     this->dump_active_.store(false);
@@ -946,17 +958,30 @@ esp_err_t SliderLab::handle_dump_(httpd_req_t *req) {
     err = httpd_resp_send_chunk(req, buf, len);
   }
 
+  // Rows are formatted with INTEGER math only. The obvious "%.3f/%.2f" route
+  // crashed the rig twice (IllegalInstruction inside newlib _dtoa_r, decoded
+  // from the on-device crash reports): high-rate double formatting in the
+  // httpd task, concurrent with the main task's float logging, corrupts
+  // newlib's shared mprec state on this soft-float S2 — and the reboot wipes
+  // the recording. Both fields are exact decimal fixed-point anyway
+  // (t = µs, adc mean of 4 samples = quarter counts), so integers are not an
+  // approximation; the CSV contract output is unchanged.
   size_t used = 0;
   for (uint32_t i = 0; i < n && err == ESP_OK; i++) {
     const Record &r = this->buf_[i];
+    const unsigned t_int = r.t_us / 1000u;
+    const unsigned t_frac = r.t_us % 1000u;
+    const uint32_t adc_centi = (uint32_t) lrintf(r.adc_mean * 100.0f);
     int m;
     if (raw) {
-      m = snprintf(buf + used, bufsz - used, "%.3f,%.2f,%d,%u,%u,%u,%u,%u,%u,%u\n", r.t_us / 1000.0,
-                   (double) r.adc_mean, (int) r.duty_milli, (unsigned) r.seg, (unsigned) r.flags,
-                   (unsigned) r.tick_us, (unsigned) r.s[0], (unsigned) r.s[1], (unsigned) r.s[2], (unsigned) r.s[3]);
+      m = snprintf(buf + used, bufsz - used, "%u.%03u,%u.%02u,%d,%u,%u,%u,%u,%u,%u,%u\n", t_int, t_frac,
+                   (unsigned) (adc_centi / 100u), (unsigned) (adc_centi % 100u), (int) r.duty_milli, (unsigned) r.seg,
+                   (unsigned) r.flags, (unsigned) r.tick_us, (unsigned) r.s[0], (unsigned) r.s[1], (unsigned) r.s[2],
+                   (unsigned) r.s[3]);
     } else {
-      m = snprintf(buf + used, bufsz - used, "%.3f,%.2f,%d,%u,%u,%u\n", r.t_us / 1000.0, (double) r.adc_mean,
-                   (int) r.duty_milli, (unsigned) r.seg, (unsigned) r.flags, (unsigned) r.tick_us);
+      m = snprintf(buf + used, bufsz - used, "%u.%03u,%u.%02u,%d,%u,%u,%u\n", t_int, t_frac,
+                   (unsigned) (adc_centi / 100u), (unsigned) (adc_centi % 100u), (int) r.duty_milli, (unsigned) r.seg,
+                   (unsigned) r.flags, (unsigned) r.tick_us);
     }
     used += (size_t) m;
     if (used > bufsz - 128) {
@@ -967,10 +992,17 @@ esp_err_t SliderLab::handle_dump_(httpd_req_t *req) {
   if (err == ESP_OK && used > 0)
     err = httpd_resp_send_chunk(req, buf, used);
   if (err == ESP_OK)
-    httpd_resp_send_chunk(req, nullptr, 0);  // end of chunked response
+    err = httpd_resp_send_chunk(req, nullptr, 0);  // end of chunked response
 
   free(buf);
   this->dump_active_.store(false);
+  if (err != ESP_OK) {
+    // client went away mid-stream (stall/abort): terminate cleanly, make httpd
+    // close the session. The recording is untouched — the buffer is only ever
+    // cleared when a new experiment arms (start_run_).
+    ESP_LOGW(TAG, "dump aborted by client after %u records (socket send failed)", (unsigned) n);
+    return ESP_FAIL;
+  }
   return ESP_OK;
 }
 

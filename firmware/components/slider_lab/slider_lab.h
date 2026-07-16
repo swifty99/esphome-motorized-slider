@@ -103,6 +103,8 @@ class SliderLab : public Component {
   std::string get_player_state() const;
   bool is_recorder_full() const { return this->recorder_full_.load(); }
   uint16_t get_last_tick_us() const { return this->last_tick_us_.load(); }
+  // readback of the actually driven scope-sync level (pin is INPUT_OUTPUT)
+  bool get_sync_level() const { return gpio_get_level((gpio_num_t) this->sync_pin_) != 0; }
 
  protected:
   enum class State : uint8_t { IDLE = 0, RUNNING = 1, TAIL = 2 };
@@ -141,7 +143,7 @@ class SliderLab : public Component {
   uint8_t adc_channel_{8};
   uint8_t ain1_pin_{11};
   uint8_t ain2_pin_{10};
-  uint8_t sync_pin_{12};
+  uint8_t sync_pin_{14};
   uint16_t http_port_{80};
   bool invert_direction_{false};
 
