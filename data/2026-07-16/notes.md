@@ -7,3 +7,11 @@
 - 2026-07-16 20:43 `11_noise_floor.csv`: preflight actuation blip
 - 2026-07-16 20:48 `12_dither.csv`: labctl: endstop_safe nudge out of the end zone before preflight
 - 2026-07-16 20:48 `13_dither.csv`: preflight actuation blip
+- 2026-07-16 21:54 `15_dither.csv`: preflight actuation blip
+- 2026-07-16 22:36 `17_dither.csv`: preflight actuation blip
+- 2026-07-16 22:43 `23_dither.csv`: coder: endstop_safe nudge out of the end zone before pwm_coupling verification
+- 2026-07-16 22:44 `24_reversal.csv`: coder: reposition to mid-travel (also 2nd goto direction check)
+- 2026-07-16 22:45 `25_dither.csv`: coder: -0.85 blip to unstick from high-end zone
+- 2026-07-16 22:45 `26_dither.csv`: coder: endstop_safe nudge out of bottom end zone
+- 2026-07-16 22:46 `27_pwm_coupling.csv`: coder verification: new 0.5 clamp, mid-travel stall check
+- 2026-07-16 22:48 `29_reversal.csv`: coder: goto_duty param end-to-end check
