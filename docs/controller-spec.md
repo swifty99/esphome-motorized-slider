@@ -1,7 +1,12 @@
 # Controller Spec — `slider_servo`
 
 > **DRAFT / NICHT FREIGEGEBEN.** Phase-4 approval gate (plan.md): Jan
-> approves the trigger graph (§2) BEFORE any implementation. Numbers cited
+> approves the trigger graph (§2) BEFORE any implementation.
+> **Gate-Fragen 1–8 beantwortet (Jan, 2026-07-17 abends)** — eingearbeitet:
+> §2 um CRAWL erweitert (Antwort 1, Zeilen 26–29), Endzonen-Politik (a)
+> (Antwort 8), §6 jetzt Antworten statt Fragen. Freigabe = Jans OK auf den
+> revidierten Graphen; alles außer den CRAWL-Zeilen stand schon zur Abnahme.
+> Numbers cited
 > from `docs/plant-model.md` (measurements), SIL evidence from
 > `docs/findings/controller-prototype.md`, parameter sourcing from
 > `docs/auto-ident-spec.md`. Prototype source: `analysis/src/slideranalysis/
@@ -17,10 +22,10 @@ one object; no function-static state anywhere.
 | Layer | Owns | Talks to |
 |---|---|---|
 | L5 Command (ESPHome/HA wrapper) | set_target, release, tolerance, param push, diagnostics out | L4; NVS param blob |
-| L4 Trajectory | velocity schedule (cliff floor ≥ v_min_cmd), waypoint = target − approach_margin, endgame pulse planning from the per-unit M7 table | L3 |
+| L4 Trajectory | velocity schedule (cliff floor ≥ v_min_cmd), waypoint = target − approach_margin, endgame pulse planning from the per-unit M7 table, **CRAWL pulse-train pacing for requested cruise < v_min_cmd** (§2 rows 26–29), target clamping to the calibrated span (dead-band edges from endpoint calibration; `target_clamped` diagnostic) | L3 |
 | L3 Motion core (state machine §2) | FF cascade + reference-integrator feedback, stall escalation, grab declaration, settle latch | L2, L1 |
 | L2 Observer | 2-state duty-driven EKF, R(duty) from sensor model, innovation gate with bounded lockout, **progress signal from p̂ window** | L1 (ADC via HAL) |
-| L1 Safety | thermal duty budget, abort switch, **end-zone policy = Gate-Frage 8** (lab rig removed the cut 2026-07-17 — passive marker only; for the servo a *directional* clamp「only block torque INTO the nearby stop」would avoid the trap while keeping stop protection) | HAL (PWM) — clamps L3's output, reports the clamp |
+| L1 Safety | thermal duty budget, abort switch, **end-zone policy (a) — DECIDED 2026-07-17**: no positional torque clamp at all (Jan: hardware is very fault tolerant, 100 % duty for 10 s is fine; the rig's direction-agnostic cut caused 24 traps in one night). Budget + thermal interlocks are the only current protection. The real end-zone problem is the **sensor dead band** — handled in L4/L5 as target clamping, not in L1 as torque policy | HAL (PWM) — clamps L3's output, reports the clamp |
 | L0 HAL | `read_adc()`, `set_pwm(signed duty)`, `now_us()`, param load/store | hardware / SIL stubs |
 
 Tick pipeline (1 kHz, same order in SIL and firmware): sample ADC → L2
@@ -38,7 +43,12 @@ v̂ sign. p_ref integrates v_des and freezes beyond ±e_p_clamp.
 ## 2. State machine — trigger graph
 
 States: **IDLE** (output ≡ 0, latched), **MOVE**, **BRAKE**, **PULSE**,
-**WAIT**, **RELEASED** (torque-free, waiting for stillness; entered by grab,
+**WAIT**, **CRAWL** (paced sub-cliff pulse train toward a distant target —
+Gate answer 1: slow motion is a v1 requirement, and the cliff means no
+sustained duty can do it; a ratcheting reference advances at the requested
+rate and each due pulse is dosed from the per-unit table for the current
+ratchet error, so the train self-corrects against table optimism),
+**RELEASED** (torque-free, waiting for stillness; entered by grab,
 command, or persistent interlock). Trigger sources: `CMD` (HA/API), `TICK`
 (per-tick evaluation), `OBS` (observer-derived event), `ILK` (L1 reports a
 clamp), `TIME` (timer expiry). Every transition below is exhaustive — a
@@ -54,7 +64,7 @@ harness asserts exactly that.
 | 5 | MOVE | TICK remaining ≤ stop_dist(v̂) | — | BRAKE | u := 0 |
 | 6 | MOVE | TICK progress-stall ≥ stall_ms (OBS p̂-window, **never v̂**) | escalation not saturated | MOVE | kick += kick_boost each kick_period |
 | 7 | MOVE | TICK progress-stall AND \|u_raw\| ≥ u_max for grab_sat_ms | — | RELEASED | reason=grab; u := 0 next tick |
-| 8 | MOVE/BRAKE/PULSE/WAIT | CMD set_target (new) | — | BRAKE | target := new; replan at stillness (via 9→10) |
+| 8 | MOVE/BRAKE/PULSE/WAIT/CRAWL | CMD set_target (new) | — | BRAKE | target := new; replan at stillness (via 9→10) |
 | 9 | BRAKE | OBS still (progress < stall_v) | — | WAIT | settle timer (long) |
 | 10 | WAIT | TIME expiry | \|err\| ≤ tol | IDLE | settle latch; hold := p̂ |
 | 11 | WAIT | TIME expiry | pulses ≥ impulse_max or removes > 3 | IDLE | **gave_up diagnostic flag** (never silent) |
@@ -62,9 +72,9 @@ harness asserts exactly that.
 | 13 | WAIT | TIME expiry | \|err\| > endgame_zone + 2 | MOVE | removes += 1 (escalation-breakthrough re-approach) |
 | 14 | WAIT | TIME expiry | err > 0 | PULSE | fwd width from table, aim·err |
 | 15 | WAIT | TIME expiry | err < 0 | PULSE | rev width to target − reapproach; overshoots += 1 iff last pulse was fwd |
-| 16 | PULSE | TICK width elapsed | — | WAIT | settle timer (short ≤12 ms pulses, long otherwise) |
+| 16 | PULSE | TICK width elapsed | — | WAIT or CRAWL (origin state) | settle timer (short ≤12 ms pulses, long otherwise) |
 | 17 | PULSE | CMD set_target / abort | — | BRAKE | pulse cut mid-width (allowed; endgame re-measures) |
-| 18 | MOVE/PULSE | ILK clamp persistent > ilk_yield_ms | — | RELEASED | reason=interlock; do not fight L1 |
+| 18 | MOVE/PULSE/CRAWL | ILK clamp persistent > ilk_yield_ms | — | RELEASED | reason=interlock; do not fight L1 |
 | 19 | any except IDLE | TIME watchdog (2× expected move time + 1 s) | — | RELEASED | reason=watchdog; diagnostic flag |
 | 20 | RELEASED | OBS still ≥ release_still_ms | no pending target | IDLE | hold := p̂ (adopt) |
 | 21 | RELEASED | OBS still ≥ release_still_ms | pending CMD target | MOVE/WAIT per rules 1–3 | execute pending |
@@ -72,6 +82,14 @@ harness asserts exactly that.
 | 23 | any | CMD release/abort | — | RELEASED | u := 0 within ≤ 2 ticks |
 | 24 | any | REC recorder full | — | — | **no transition, ever** (ring buffer; control is recorder-blind) |
 | 25 | any | OBS fault (NaN/P divergence) | — | RELEASED | reason=fault; diagnostic; requires CMD to leave IDLE after |
+| 26 | IDLE | CMD set_target with requested cruise v_req < v_min_cmd | \|err\| > endgame_zone | CRAWL | ratchet := p̂; rate := clamp(v_req, crawl envelope) |
+| 27 | CRAWL | TICK pulse due (settle elapsed, ratchet ahead of p̂) | remaining > endgame_zone | PULSE | width from per-unit table for (ratchet − p̂), domain-clamped; origin = CRAWL |
+| 28 | CRAWL | TICK | remaining ≤ endgame_zone | WAIT | endgame handover — landing rules 10–15 unchanged (fwd-only) |
+| 29 | CRAWL | TICK ≥ crawl_grab_pulses zero-travel pulses OR \|p̂ − ratchet\| > crawl_override_err | — | RELEASED | reason=grab (hand blocks or drags — Gate answer 3: never fight) |
+
+CRAWL honesty (T8 family): persistent delivery shortfall (achieved rate
+< ½·requested over 2 s despite domain-max widths) sets a `crawl_degraded`
+diagnostic flag and continues — never a silent slow-down.
 
 ## 3. Invariants as tripwires (each: SIL assertion + negative control)
 
@@ -93,8 +111,10 @@ Seeds T1–T7 exist as `tests/test_controller.py`; all get negative controls
 | T11 | \|u\| ≤ u_max on every tick incl. FF + kick + feedback sum | raise kick cap |
 | T12 | Observer input independence: z comes from the ADC path only; with a frozen sensor and active duty, p̂ converges to z (post-gate), not to the model | blend commanded duty into z |
 | T13 | Recorder independence: bit-identical control trace with recorder on/off/full | add recorder backpressure to the tick |
-| T14 | Interlock supremacy: L1's clamp overrides L3 the same tick (endzone: applied duty 0 regardless of command) | apply clamp one tick late |
+| T14 | Interlock supremacy: L1's clamp overrides L3 the same tick (thermal/budget: applied duty clamped regardless of command — no end-zone clamp exists, policy (a)) | apply clamp one tick late |
 | T15 | (state, trigger) pairs outside §2 are no-ops — fuzz all triggers in all states | add an undocumented transition |
+| T16 | CRAWL emits **zero duty between pulses** — no inter-pulse hold, ramp, or creep duty; every motion in CRAWL is a table-domain pulse (T2/T10 extended to CRAWL) | add a 0.1 inter-pulse hold duty |
+| T17 | CRAWL override: hand blocking (crawl_grab_pulses zero-travel pulses) or dragging (\|p̂ − ratchet\| > crawl_override_err) reaches RELEASED with u ≡ 0 the next tick | drop the ratchet-error check |
 
 ## 4. Forbidden list (drift lives in the gaps)
 
@@ -102,8 +122,9 @@ Seeds T1–T7 exist as `tests/test_controller.py`; all get negative controls
 2. **No friction FF keyed to torque sign or estimated-velocity sign** — the
    legacy ±0.42 relay bug. Desired-velocity sign only.
 3. **No commanded cruise below the cliff** (measured: ≤1 %/s at 0.66,
-   ≥100 %/s at 0.68): no v_des in (0, v_min_cmd), no sustained duty in
-   (0.05, 0.45). Impulses (±0.8, ≤50 ms) are the only sub-cliff motion tool.
+   ≥100 %/s at 0.68): no v_des in (0, v_min_cmd) to the L3 cascade, no
+   sustained duty in (0.05, 0.45). Impulses (±0.8, ≤50 ms) are the only
+   sub-cliff motion tool — isolated in the endgame, paced trains in CRAWL.
 4. **No endgame from both directions** — forward landings only; overshoot
    costs a rev re-approach, never a rev landing.
 5. **No filtering, averaging, or resampling in the recorder path**, and no
@@ -147,35 +168,54 @@ Compile-time defaults (HA-overridable where marked):
 | kick (+step, period) | 0.08, 60 ms | reaches u_max from any FF in ≤3 steps | no |
 | grab (sat, zero-travel pulses, still) | 120 ms, 3, 300 ms | u_max > worst breakaway ⇒ discriminates; floor ~0.4 s total | no |
 | gate (σ, max consecutive) | 5, 8 | spike tail measurement / lockout bound (T5) | no |
+| v_crawl_max | 60 %/s | 20 ms pulse (+6.2 % med) per 120 ms short-settle; requested cruise in (v_crawl_max, v_min_cmd) rounds up to v_min_cmd | no |
+| crawl period (min/max) | 120 / 600 ms | short-settle floor (**HIL re-tunes up**, same caveat as impulse settle) / pacing ceiling for the slowest useful crawl | no |
+| crawl_grab_pulses / crawl_override_err | 3 / 3 % | mirrors WAIT grab rule 12 / adopt_err | no |
 
-## 6. Explicit HIL items (Phase 6) and decisions for Jan
+## 6. Gate answers (Jan, 2026-07-17 abends) and HIL items (Phase 6)
 
 Sim could not credibly test — these are **hardware verification items**:
-(a) A4@50 %/s cruise (sim not credible; see question 1), (b) A6 reversal
+(a) slow cruise via CRAWL (pacing envelope + tracking), (b) A6 reversal
 thunk (no acoustics; M6 found no positional dead band ≥1–2 ms), (c) A8 grab
 timing with a real hand, (d) impulse settle times under real post-pulse
-creep, (e) long-term drift/temperature.
+creep (drives crawl period floor too), (e) long-term drift/temperature,
+(f) **CRAWL acoustics** — pulse-train clacking vs. the dither-assisted
+variant, Jan's ear decides.
 
-**Questions to answer at this gate:**
+**Gate answers:**
 
-1. **A4**: keep 50 %/s as a requirement (then v1 must synthesize slow motion
-   as impulse trains — extra trajectory mode), or restate A4 at ≥120 %/s?
-2. **A8**: accept the ~0.4 s pot-only grab floor for v1, or pull Phase-7
-   sensing (shunt current / knob accel) forward now? This is a hardware
-   decision that changes L2.
-3. **Grab semantics**: released slider ADOPTS its position (fader UX,
-   specced here) — or should the move resume after release?
-4. **Detents/force-feedback**: still v1.1 (plan.md open question 2)? This
-   spec has no detent layer; adding one later touches L4 only.
-5. **Dither**: M8 says it buys base-duty headroom ≈ amplitude; forbidden at
-   rest until you rule on audibility (forbidden list #9).
-6. **tol = 0.3 %** default: consistent with A1/A3 — confirm as the UX default?
-7. **The trigger graph (§2)**: approve, or rewrite states/transitions before
-   any C++ exists.
-8. **End-zone policy for the servo (L1)**: the lab rig dropped the
-   direction-agnostic cut today (nutzlos + hinderlich, 24 traps in one
-   night). For `slider_servo`: (a) no positional clamp at all (budget +
-   thermal only, like the rig now), or (b) **directional clamp** — torque
-   toward the nearby stop is cut outside [3, 97], torque away is always
-   allowed (no trap by construction)? T14's negative control follows the
-   choice. Spec currently assumes (b) pending your call.
+1. **A4 — slow motion is required** („fast is easy"). 50 %/s stays; v1
+   synthesizes sub-cliff cruise as CRAWL pulse trains (§2 rows 26–29).
+   A4 restated in plan.md: fast metric unchanged, slow metric = ramp
+   tracking + acoustics, both HIL.
+2. **A8 — accepted**: the ~0.4 s pot-only grab floor is fine for v1
+   („grabbing is relaxed"). A8 restated to ≤0.5 s detect, release ≤2 ticks
+   unchanged. No Phase-7 sensing pulled forward; L2 unchanged.
+3. **Grab semantics — adopt, never resume, never fight**: „the user is
+   always right." Fighting a hand exists only as explicit force feedback,
+   which is deferred (answer 4). v1 = slow controlled motion with override
+   detection (rules 4, 7, 12, 29; T4/T6/T17).
+4. **Detents/force feedback — v1.1** (also closes plan.md open question 2).
+   No detent layer in v1; a later detent layer touches L4 only.
+5. **Dither — implementer's choice** („keep if needed, remove if not";
+   Jan doesn't care *how* slow motion is done, preferably silent). Plan:
+   pulse-train CRAWL is primary; the M8 base+amplitude law makes a
+   dither-assisted silent variant the fallback iff pulses are audible and
+   dither is not (HIL item f). Forbidden list #9 (no torque at rest)
+   stands regardless — dither never runs in IDLE.
+6. **tol — Jan's UX bar is 2 %**. Spec default stays 0.3 % (A1/A3
+   ambition, already met in SIL; HA-overridable). Consequence: a gave_up
+   or adopted settle inside 2 % is acceptable UX, not a failure — the
+   honest flags (T8) report it, nobody escalates hardware over it.
+7. **Trigger graph — rewrite license granted** („rewrite what you need").
+   Exercised for CRAWL (states list, rows 8/16/18 touched, 26–29 added).
+   Everything else stands as drafted. Formal gate close = Jan's OK on the
+   revised rows.
+8. **End zones — policy (a), no positional torque clamp.** Jan: the dead
+   band is the bad part, but „hw is very fault tolerant, 100 % motor for
+   10 seconds no problem" → budget + thermal interlocks are sufficient
+   current protection; no directional clamp, no trap by construction.
+   The dead band is handled as a *sensor* problem in L4/L5: endpoint
+   calibration defines the usable span, targets clamp into it with a
+   `target_clamped` diagnostic. T14's negative control retargets to the
+   thermal/budget clamp.

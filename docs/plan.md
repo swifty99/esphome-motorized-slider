@@ -135,11 +135,12 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 | A1 | Landing accuracy, 40 randomized moves | ≤0.5 % median, ≤1.0 % p95 |
 | A2 | Rest silence after settle | both PWM outputs identically 0 for ≥2 s, no re-trigger |
 | A3 | No limit cycle | position p-p ≤0.3 % after settle |
-| A4 | Cruise smoothness (50 %/s, mid-travel) | velocity ripple σ/mean ≤0.15 |
+| A4 | Cruise smoothness, fast (≥120 %/s, mid-travel) | velocity ripple σ/mean ≤0.15 |
+| A4s | Slow cruise (≤60 %/s via CRAWL trains — required, „fast is easy", 2026-07-17) | position envelope vs. constant-velocity ramp ≤1.5 % p95; acoustics = Jan's ear (HIL) |
 | A5 | 50 %-travel move duration | ≤1.2 s incl. settle |
 | A6 | Reversal | no audible thunk; quantified threshold set after M6 |
 | A7 | Detent pull-in from 3 % offset | settled ≤400 ms, ≤1 overshoot |
-| A8 | Manual grab during move | detected ≤100 ms, torque released ≤2 ticks after |
+| A8 | Manual grab during move | detected ≤0.5 s (pot-only floor accepted 2026-07-17, „grabbing is relaxed"), torque released ≤2 ticks after |
 | A9 | Loop health | ISR p99 <500 µs, zero missed 1 kHz ticks in 60 s |
 
 ## Standing decisions (defaults — say the word to change)
@@ -170,8 +171,10 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
    GND-Rückleitung des Moduls** (GND—Shunt—GND-Brücke), single-ended vs TP-GND.
    Kein ITRIP-Schutz (existiert am L9110 nicht) — Interlocks der Firmware sind
    der einzige Stromschutz. M3/M6 messen den Gesamt-Brückenstrom.
-2. Is **force feedback / Rastpunkte** a v1 requirement, or is smooth positioning the
-   priority and FF comes as v1.1? (Affects Phase 4 spec scope, not Phases 1–3.)
+2. ~~Force feedback / Rastpunkte v1 oder v1.1?~~ → **v1.1** (2026-07-17
+   abends). v1 = smooth positioning + slow controlled motion with override
+   detection; a hand is never fought outside configured FF. Detent layer
+   later touches L4 only (controller-spec §6 answer 4).
 
 ## Status tracker
 
@@ -181,7 +184,7 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 | 1 Lab rig | ✅ KOMPLETT (2026-07-17 morgens) | Alignment-Gate geschlossen: −0.68 ms über 10 s (68 ppm), Ch-B-Trigger (EXT-Pfad tot, Bench-Diagnose offen); Co-Swing Ch A verifiziert (Ratio 1.20); feste IP .115; Endzonen-Cut → passiver Marker (Jans Entscheid, R4 aktualisiert) |
 | 2 Measurements | ✅ CSV-Teil (Nacht 07-16→17) | M1/M4/M5/M6/M7/M8-objektiv + Fein-Ladders + M2-CSV komplett, 127 Runs; OFFEN (brauchen Scope): M3 I(duty)→K/R, M2-Spikes, M1b INL, Ch-A-Co-Swing; Entscheidungen: decay FAST empfohlen, Dither kein Wundermittel (Δbase≈Amplitude), Backlash nicht auflösbar; Summary: docs/findings/night-2026-07-17.md |
 | 3 Offline design | ✅ KOMPLETT (2026-07-17) | Sim validiert, EKF-Observer 3–5× über Legacy, Demo 4/4 ±1%; Controller-Prototyp im SIL: A1/A2/A3/A4@150/A5/A7 + Band-Stress alle PASS unter gestörten Plants mit EKF im Loop (d55debd/6b388a1); NOT-CREDIBLE dokumentiert: A4@50%/s (unterm Cliff), A6, A8 (~0.4s Grab-Floor mit Pot-only → Phase-7-Argument); 5 Failure-Modes als Phase-4-Input |
-| 4 Controller spec | ⬜ | approval gate |
+| 4 Controller spec | 🔶 Gate-Fragen 8/8 beantwortet (2026-07-17 abends) | Antworten eingearbeitet: CRAWL-Modus (§2 Zeilen 26–29, T16/T17), Endzonen-Politik (a), A4 slow bleibt Pflicht (A4s), A8-Floor akzeptiert, FF→v1.1, tol-UX-Bar 2 %; **offen: Jans OK auf die revidierten Graph-Zeilen** — dann Phase 5 |
 | 5 Implementation + SIL | ⬜ | |
 | 6 HIL verification | ⬜ | flash gate |
 | 7 Escalations | ⬜ | only if needed |
