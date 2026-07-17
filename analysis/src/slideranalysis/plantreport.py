@@ -219,6 +219,14 @@ def main(argv=None) -> int:
             plant.meta["m_objective_flatness"] = float(flat)
             plant.m = m_ref
 
+    # physical seam from the M3 fit (m3fit writes motor-params.json); keep it
+    # attached across regenerations -- controller code never reads it, it is
+    # the K/R bridge for when the model moves to physical units
+    mp = out / "motor-params.json"
+    if mp.exists():
+        import json as _json
+        plant.meta["physical"] = _json.loads(mp.read_text(encoding="utf-8"))
+
     pj = out / "plant-params.json"
     plant.to_json(pj)
     print(f"\nplant params -> {pj}")

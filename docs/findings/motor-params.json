@@ -1,0 +1,32 @@
+{
+  "vm_v": 5.0,
+  "shunt_ohm": 0.2,
+  "r_ohm": {
+    "fast": 8.49,
+    "slow": 8.02
+  },
+  "r_se_ohm": {
+    "fast": 0.39,
+    "slow": 0.36
+  },
+  "v_eff_v": {
+    "fast": 3.14,
+    "slow": 3.49
+  },
+  "c_ma": {
+    "fast": 145.1,
+    "slow": 174.7
+  },
+  "r_fit_validity": "duty >= 0.5 (CCM); model I_shunt = d(d*VM - V_eff)/R + c",
+  "k_v_per_pct_s": 0.000363,
+  "k_se": 5e-05,
+  "k_over_r_a_per_pct_s": 4.393e-05,
+  "i_on_stall_a": 0.25,
+  "i1_ma": {
+    "fast": 219.0,
+    "slow": 189.0
+  },
+  "position_spread_frac": 0.0142,
+  "b_electro_duty_per_pct_s": 0.000176,
+  "note": "duty-unit force F corresponds to motor current F * I_on_stall; K expressed per % slider travel (V/(%/s)); shunt sees ON-phase current only (recirculation is bridge-internal)"
+}

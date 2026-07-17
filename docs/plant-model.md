@@ -4,12 +4,13 @@ Data basis: 127 runs (final campaign state incl. Block 4), `data/2026-07-16/`
 + `data/2026-07-17/` (M1 noise, M2-CSV coupling grid in both decay modes,
 M3-degraded coarse + fine duty ladders, M4 breakaway grid 34 valid trials,
 M5 steps + triangles, M6 reversal pairs, M7 impulse ladders, M8 dither grid,
-unstick blips as bonus impulses). VM = 5.00 V constant,
-1 kHz tick, ADC 13-bit ×4. **No current measurements** (scope died on the USB
-bus 2026-07-16 23:xx) — everything below is in **duty units**: "force" means
-*stall-equivalent duty*, under the stated assumption that stall force ∝ duty
-(L9110, brake-type PWM in both firmware modes). Electrical K and R are **not
-identifiable** from this data set.
+unstick blips as bonus impulses; M3 current ladders added in the day session,
+§7). VM = 5.00 V constant, 1 kHz tick, ADC 13-bit ×4. Everything in §§1–6 is
+in **duty units**: "force" means *stall-equivalent duty*. Since the M3 pass,
+K and R are measured (§7) and the physical seam lives in
+`plant-params.json meta.physical`; the duty-units frame remains the
+controller's working frame. Force ∝ duty stays an assumption below ~0.5 duty
+(§7 limits).
 
 Reproduce everything:
 
@@ -48,8 +49,8 @@ data) and the coarse ladders showed no drive advantage for SLOW (0.70 rung:
 FAST +211 %/s vs SLOW +180 %/s), **recommendation: FAST (brake-low) as the
 servo drive mode** — it is the quieter one on the only channel the servo has.
 The spike tail (not broadband σ) is the dominant coupling artifact in both
-modes → the M2 RC-filter recipe (~100 nF at the ADC pin) remains the design
-candidate; final RC decision still needs the scope (spike waveform, M2).
+modes. The spike waveform is now measured and the RC decision is FINAL — see
+§7: 100 nF at the ADC pin returns the sensor to its unpowered floor.
 
 Consequences: any threshold on per-tick position (movement detectors!) must
 sit above ~1.5 % or be median-filtered — the firmware breakaway detector
@@ -268,8 +269,10 @@ Valid: position 3–97 %, |duty| ≤ 0.85, VM = 5.00 V, this exemplar, this nigh
 (no temperature/wear model). Fitted from |v| > 30 %/s; below that the model
 is qualitative.
 
-1. **K, R, torque constant**: need the scope + shunt (M3). Duty-units model
-   stands in until then; linearity of force∝duty is an assumption.
+1. **K, R**: MEASURED (M3, §7). The duty-units model remains the controller's
+   working frame; the physical seam is filled in `plant-params.json
+   meta.physical`. Still open: force∝duty linearity below ~0.5 duty (the
+   shunt cannot see the off-phase motor current, §7).
 2. **Backlash**: bounded ≤ 1–2 ms dead time at 0.75 duty (§4b) — no width
    measurable positionally; audible-thunk question (A6) still open for HIL.
 3. **Low-speed friction / creep / dwell dependence**: unobservable with the
@@ -286,7 +289,61 @@ is qualitative.
 7. **m**: located only within a factor ~3 ([0.6, 2.0]e-5). Fine for FF
    design (τ ≪ move duration); would matter for aggressive trajectory shaping.
 
-## 7. Open-loop feedforward recipe (demo input) — with the honest caveat
+## 7. Motor electrical parameters (M3, 2026-07-17 day session)
+
+Source: 14 scope/CSV ladder pairs (`data/2026-07-17/99..132`, Ch B = 0.2 Ω
+shunt in the module GND return), spike captures 133–140. Analysis:
+`slideranalysis.m3current`, reproduce with
+`cd analysis && uv run m3fit ../data/2026-07-17 --out ../docs/findings`.
+Plots: `m3_stall_lines.png`, `m3_k_regression.png`, `m3_rc_filter.png`.
+Machine-readable: `docs/findings/motor-params.json` (also merged into
+`plant-params.json` as `meta.physical` — the controller never reads it; it
+is the seam for physical units).
+
+**Circuit insight that shapes everything:** the shunt sees only the PWM
+ON-phase current — off-phase recirculation is bridge-internal (both L9110
+modes are brake-type). Hence `I_shunt ≈ d·I_motor`, the stall line is
+intrinsically curved, and the folded 10 MS/s waveform confirms it (square
+0→~250 mA at duty 0.3: the motor sees the full 5 V minus ~3 V of darlington
+drops during ON).
+
+| Quantity | Value (2σ) | Method / validity |
+|---|---|---|
+| R (motor+shunt+wiring, ON path) | **FAST 8.5 ± 0.8 Ω, SLOW 8.0 ± 0.7 Ω** → pooled **8.2 ± 0.8 Ω** | CCM model `I_shunt = d(d·VM − V_eff)/R + c`, linear LSQ, **valid d ≥ 0.5 only** (below: DCM/recirculation, line flattens to a switching-artifact floor — R deliberately not fitted there); resid 0.8/0.9 mA on 12/14 points incl. at-stop 0.68–0.80 rungs |
+| V_eff (bridge saturation + brush) | 3.1–3.5 V | same fit; **partially degenerate with c** over the narrow duty window — quote as "the L9110 eats ~⅔ of VM", not as a precision number |
+| c (off-phase artifact + base drive) | 145 (FAST) / 175 (SLOW) mA | the +30 mA SLOW offset matches the campaign's "+5–12 mA at low duty, converging by 0.6": brake-HIGH freewheel routes its base/bias current through the supply/GND (shunt-visible), brake-LOW's loop is internal — consistent hypothesis, not proven |
+| K (back-EMF per % travel) | **0.36 ± 0.20 mV/(%/s)** | within-rung I-vs-v regression on the 0.68 flight phases (4 runs: 0.29/0.49/0.45/0.29 — wide spread, honest CI); `K/R = 44 µA/(%/s)` per duty is the regression-direct, R-independent number |
+| Position independence of stall I | **±1.42 % max** (0.1–0.6, 5 positions, both modes) | confirms the campaign's ±1.5 % claim → the drive train is electrically homogeneous; ALL position dependence in the friction maps is mechanical |
+| Consistency with b | b_electro ≈ **1.8e-4 duty/(%/s)** ≈ ⅓ of the fitted b = 5.5e-4 → mechanical remainder 3.7e-4 > 0 ✓ | electrodynamic braking from K/R and the ~250 mA ON-level; consistent, no contradiction |
+
+Limits, stated: (a) force ∝ duty below ~0.5 is UNVERIFIED — the shunt cannot
+see the off-phase motor current that also carries torque; (b) K's ±55 %
+spread means torque-per-amp bookkeeping is rough; for the servo this does
+not matter — all FF quantities are identified directly in duty units.
+(c) **Tooling flag for the campaign:** Ch B levels in the `spikes` preset
+read ~3.1× LOWER than the `ladder` preset at the same operating point
+(folded ON-levels vs. stall table). The FAST-vs-SLOW spike comparison
+(554 vs 190 mV) is same-preset and stands; the absolute mV values are
+suspect until the range-dependent scaling in the capture path is checked.
+
+### RC filter — final recommendation (with the decay-mode decision)
+
+The unclipped wiper capture (139, AC-settle transient excluded) identifies
+the ADC "spike tail" mechanism: **~0.1–0.3 µs switching bursts (~380 kHz
+ringing, singles to ±0.2 V)** on the wiper node; an ADC sample landing
+inside a burst (~5 %/tick odds) shifts that tick by up to ~±50 mV ≈ 140
+counts — exactly the measured tail. Emulating the firmware's 4×-per-tick
+sampling on the measured trace: **rms 11 counts / p-p 69** (matches the live
+ADC under PWM), and after a first-order RC 1.5 kΩ(wiper source)×**100 nF**
+(fc ≈ 1.06 kHz): **rms 8.8 counts ≈ the unpowered floor (8.5), p-p 32**.
+Cost: τ = 150 µs → ~0.15 ms lag at trajectory bandwidth, ~1.4 ms settle to
+13-bit after a (non-physical) full-scale step — negligible at 1 kHz control.
+
+**Decision: fit 100 nF at the ADC pin; drive mode stays FAST** (drive: +15 %
+speed at 0.70; sensor: FAST is cleaner without the RC and equal with it;
+SLOW's cleaner current path is an EMC nicety, not a servo argument).
+
+## 8. Open-loop feedforward recipe (demo input) — with the honest caveat
 
 Sim-checked recipes (`plantsim`, parameters above). Two regimes:
 
