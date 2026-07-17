@@ -56,11 +56,10 @@ class Servo {
   void set_target(float target, float v_req = 0.0f) {
     controller_.set_target(target, observer_.p_hat(), v_req);
   }
-  void release() { controller_.release(ReleaseReason::COMMAND); }
-  void set_abort(bool on) {
-    safety_.set_abort(on);
-    if (on) controller_.release(ReleaseReason::COMMAND);  // row 23
-  }
+  void release() { controller_.release(ReleaseReason::COMMAND); }  // row 23
+  // L1 abort switch: clamps in L1 only — the controller is not informed
+  // politely, it yields via the persistent-interlock path (row 18, T14).
+  void set_abort(bool on) { safety_.set_abort(on); }
 
   // One 1 kHz tick. z_pct: position sample in % travel. Returns applied duty.
   float tick(float z_pct) {

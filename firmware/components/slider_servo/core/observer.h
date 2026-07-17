@@ -56,6 +56,9 @@ class Observer {
   float v_hat() const { return v_; }
   float innovation() const { return innov_; }
   bool fault() const { return fault_; }
+  bool model_stuck() const { return stuck_; }
+  int gate_rejects() const { return gate_rejects_; }
+  float p00() const { return P00_; }
 
  private:
   void predict(float u) {
@@ -83,6 +86,15 @@ class Observer {
     }
     float p_new = p_ + v_ * DT;
     float v_new = v_ + a * DT;
+    if (!stuck_ && v_ != 0.0f && (v_new > 0.0f) != (v_ > 0.0f)) {
+      // decelerated through zero: re-stick unless the drive re-breaks static
+      // contact — same rule as the identified plant. Without this the
+      // velocity state rings ±(friction decel) around zero at rest forever
+      // (the prototype observer had this flaw; found by SIL tripwire T5).
+      const float rdir = u != 0.0f ? (u > 0 ? 1.0f : -1.0f)
+                                   : (v_ > 0 ? 1.0f : -1.0f);
+      if (std::fabs(u) <= fs_map(ucal, p_, rdir)) v_new = 0.0f;
+    }
     if (p_new <= 0.0f) {          // hard stops are part of the plant
       p_new = 0.0f;
       if (v_new < 0.0f) v_new = 0.0f;
@@ -103,7 +115,7 @@ class Observer {
 
   void update(float z, float u) {
     const float r = std::fabs(u) > 0.0f ? r_pwm_ : r_quiet_;
-    const float S = P00_ + r * r;
+    float S = P00_ + r * r;
     innov_ = z - p_;
     if (stuck_ && innov_ * innov_ > cfg_->obs_gate_sigma * cfg_->obs_gate_sigma * S) {
       // isolated spike rejection at rest; consecutive rejections mean the
@@ -111,8 +123,15 @@ class Observer {
       gate_rejects_++;
       if (SIL_BUG(bug_, T5_NO_GATE_ESCAPE)) return;  // lockout forever (negative)
       if (gate_rejects_ <= cfg_->obs_gate_max_consecutive) return;
+      // escape: the model-frozen assumption failed — covariance reset so the
+      // filter SNAPS to the real offset (T5: converged <= 200 ms) instead of
+      // crawling there through the tiny rest-state gain. gate_rejects_ stays
+      // saturated until the innovation is back inside the gate.
+      P00_ += innov_ * innov_;
+      S = P00_ + r * r;
+    } else {
+      gate_rejects_ = 0;
     }
-    gate_rejects_ = 0;
     const float k0 = P00_ / S;
     const float k1 = P01_ / S;
     p_ += k0 * innov_;

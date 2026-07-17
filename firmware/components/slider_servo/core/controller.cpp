@@ -49,6 +49,7 @@ void Controller::set_target(float target, float p_hat, float v_req) {
   log_.target_clamped = was_clamped;
   settle_flag_ = SettleFlag::NONE;
   endgame_pulses_ = 0;
+  last_pulse_dir_ = 0;  // no motion under this command yet
 
   // normalize the speed request (spec §5: gap rounds up to a fast move)
   v_req_ = 0.0f;
@@ -59,10 +60,6 @@ void Controller::set_target(float target, float p_hat, float v_req) {
 
   if (state_ != State::IDLE) {
     // rows 8/17: retarget mid-motion -> BRAKE, replan at stillness (9 -> 10)
-    if (SIL_BUG(bug_, T15_ROGUE_TRANSITION)) {
-      restart_motion(p_hat);  // undocumented BRAKE-skip for the T15 fuzz check
-      return;
-    }
     state_ = State::BRAKE;
     return;
   }
@@ -271,24 +268,31 @@ float Controller::tick_brake(float v_hat) {
   if (std::fabs(v_hat) < cfg_->stall_v) {  // row 9: still -> WAIT (long)
     p_at_pulse_valid_ = false;
     nomove_pulses_ = 0;
+    if (SIL_BUG(bug_, T15_ROGUE_TRANSITION)) {
+      // undocumented BRAKE -> PULSE shortcut (T15 negative control)
+      start_pulse(cfg_->pulse_min_ms, +1, State::WAIT, 0.0f);
+      return 0.0f;
+    }
     enter_wait(cfg_->impulse_settle_ms);
   }
   return 0.0f;
 }
 
 float Controller::tick_pulse() {
-  pulse_left_--;
-  if (pulse_left_ <= 0) {  // row 16: back to the origin state, settle timer
-    const int settle_ticks = last_width_ms_ > 12 ? cfg_->impulse_settle_ms
-                                                 : cfg_->impulse_settle_short_ms;
-    if (pulse_origin_ == State::CRAWL) {
-      state_ = State::CRAWL;
-      crawl_settle_left_ = settle_ticks;
-    } else {
-      enter_wait(settle_ticks);
-    }
+  if (pulse_left_ > 0) {  // still emitting: exactly `width` ticks at +-0.8
+    pulse_left_--;
+    return cfg_->impulse_duty * static_cast<float>(pulse_dir_);
   }
-  return cfg_->impulse_duty * static_cast<float>(pulse_dir_);
+  // row 16: width elapsed — back to the origin state, settle timer running
+  const int settle_ticks = last_width_ms_ > 12 ? cfg_->impulse_settle_ms
+                                               : cfg_->impulse_settle_short_ms;
+  if (pulse_origin_ == State::CRAWL) {
+    state_ = State::CRAWL;
+    crawl_settle_left_ = settle_ticks;
+  } else {
+    enter_wait(settle_ticks);
+  }
+  return 0.0f;
 }
 
 float Controller::tick_wait(float p_hat) {
@@ -342,6 +346,7 @@ void Controller::restart_motion(float p_hat) {
   // endgame lands with forward pulses only (§4 forbidden #4)
   waypoint_ = target_ - cfg_->approach_margin;
   dir_ = waypoint_ >= p_hat ? 1 : -1;
+  last_pulse_dir_ = dir_;  // the drive itself is the last motion (T7 seat rule)
   state_ = State::MOVE;
 }
 
@@ -381,7 +386,14 @@ void Controller::endgame_decide(float p_hat) {
   }
 
   if (std::fabs(err) <= cfg.tol) {  // row 10
-    settle(p_hat, SettleFlag::REACHED);
+    if (last_pulse_dir_ >= 0 || SIL_BUG(bug_, T7_REV_LANDING)) {
+      settle(p_hat, SettleFlag::REACHED);
+      return;
+    }
+    // inside tolerance but the last motion was reverse: the settle latch must
+    // be backlash-canceling (T7, §4 forbidden #4) — seat forward with the
+    // minimum table pulse before latching
+    start_pulse(cfg.pulse_min_ms, +1, State::WAIT, p_hat);
     return;
   }
   if (endgame_pulses_ >= cfg.impulse_max || log_.removes > cfg.remove_max) {  // row 11
@@ -404,11 +416,6 @@ void Controller::endgame_decide(float p_hat) {
     return;
   }
   // row 15: overshoot -> rev pulse to BELOW the target, forward re-approach
-  if (SIL_BUG(bug_, T7_REV_LANDING)) {
-    start_pulse(pulse_width_for(*calib_, -err * cfg.impulse_aim, -1), -1,
-                State::WAIT, p_hat);
-    return;
-  }
   if (last_pulse_dir_ == +1) log_.overshoots++;
   start_pulse(
       pulse_width_for(*calib_, (-err + cfg.reapproach) * cfg.impulse_aim, -1),

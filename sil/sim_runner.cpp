@@ -45,6 +45,8 @@ struct Scenario {
   float duration_s = 8.0f;
   float rest_s = 2.5f;
   int recorder = 0;
+  int impulse_max = -1;  // config overrides (-1 = keep §5 default)
+  float tol = -1.0f;
   std::vector<Event> events;
 };
 
@@ -65,6 +67,16 @@ bool parse_scenario(const char *path, Scenario &sc) {
     else if (tok == "recorder") ss >> sc.recorder;
     else if (tok == "perturb")
       ss >> sc.perturb.d_fwd >> sc.perturb.d_rev >> sc.perturb.d_m >> sc.perturb.d_b;
+    else if (tok == "config") {
+      std::string name;
+      ss >> name;
+      if (name == "impulse_max") ss >> sc.impulse_max;
+      else if (name == "tol") ss >> sc.tol;
+      else {
+        std::fprintf(stderr, "scenario: unknown config '%s'\n", name.c_str());
+        return false;
+      }
+    }
     else if (tok == "at") {
       float t;
       Event e;
@@ -130,6 +142,8 @@ int main(int argc, char **argv) {
 
   UnitCalib nominal;  // per-unit defaults = identified snapshot
   ServoConfig cfg;
+  if (sc.impulse_max > 0) cfg.impulse_max = sc.impulse_max;
+  if (sc.tol > 0.0f) cfg.tol = sc.tol;
   TruthPlant truth = TruthPlant::from(nominal, sc.perturb);
 
   PlantStepper plant;
@@ -149,7 +163,7 @@ int main(int argc, char **argv) {
     }
     std::fprintf(csv,
                  "tick,pos,vel,stuck,z,p_hat,v_hat,u_cmd,u,state,flag,reason,"
-                 "clamped,v_des,ff,cmd\n");
+                 "clamped,v_des,ff,cmd,obs_stuck,rejects,p00\n");
   }
 
   const int n_max = static_cast<int>(sc.duration_s * 1000.0f);
@@ -217,14 +231,17 @@ int main(int argc, char **argv) {
     const Controller &c = servo.controller();
     if (csv) {
       std::fprintf(
-          csv, "%d,%.4f,%.3f,%d,%.4f,%.4f,%.3f,%.4f,%.4f,%s,%s,%s,%d,%.2f,%.4f,%d\n",
+          csv,
+          "%d,%.4f,%.3f,%d,%.4f,%.4f,%.3f,%.4f,%.4f,%s,%s,%s,%d,%.2f,%.4f,%d,"
+          "%d,%d,%.3e\n",
           i, plant.p(), plant.v(), plant.stuck() ? 1 : 0, z,
           servo.observer().p_hat(), servo.observer().v_hat(),
           servo.u_cmd_last(), u, STATE_NAMES[static_cast<int>(c.state())],
           FLAG_NAMES[static_cast<int>(c.settle_flag())],
           REASON_NAMES[static_cast<int>(c.release_reason())],
           servo.safety().clamped() ? 1 : 0, c.last_v_des(), c.last_ff(),
-          cmd_marker);
+          cmd_marker, servo.observer().model_stuck() ? 1 : 0,
+          servo.observer().gate_rejects(), servo.observer().p00());
     }
 
     if (first_cmd_tick >= 0 && settled_at < 0 && c.settled() &&
