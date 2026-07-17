@@ -40,8 +40,13 @@ probe-connections.md). There is **no hardware current chop**; the R4 interlocks
 are the only protection (L9110 ~800 mA continuous).
 
 ### R4 — Safety interlocks (non-negotiable, enforced in the tick, not in the player)
-- End-zone cut: |torque| forced 0 outside position [3, 97] % unless the running
-  experiment carries an `endstop_safe` flag (endpoint calibration needs it).
+- ~~End-zone cut~~ → **passiver Marker seit 2026-07-17 (Jans Entscheid)**: außerhalb
+  [3, 97] % wird nur noch FLAG_ENDZONE/EV_ENDZONE gesetzt, Torque bleibt unangetastet.
+  Befund der Nacht-Kampagne: der richtungsagnostische Cut hat keinen einzigen
+  Aufprall verhindert (Momentum kommt mit Torque 0 an), aber den Schlitten 24-mal
+  hinter der Grenze eingesperrt (goto nutzlos, Unstick-Blips nötig). Anhaltendes
+  Grinding in den Anschlag begrenzen Budget- und Thermal-Interlock (unten).
+  `endstop_safe` wird als Param weiter akzeptiert, ist aber ein No-op.
 - Per-experiment wall-clock budget (default 30 s) → abort + torque 0.
 - Thermal budget: moving average of |duty| over 10 s ≤0.5 → else abort.
 - HA abort switch → torque 0 within one tick.

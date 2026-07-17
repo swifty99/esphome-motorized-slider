@@ -373,10 +373,12 @@ void SliderLab::tick_() {
       this->finish_run_(true);
       torque = 0.0f;
       active_drive = false;
-    } else if (!this->active_->endstop_safe && (pos < kEndzoneLo || pos > kEndzoneHi) && torque != 0.0f) {
-      // (a) end-zone cut: torque forced 0 outside [3, 97] % (raw-scaled)
-      torque = 0.0f;
-      active_drive = false;
+    } else if ((pos < kEndzoneLo || pos > kEndzoneHi) && torque != 0.0f) {
+      // (a) end-zone marker — PASSIVE (Jans Entscheid 2026-07-17). The former
+      // direction-agnostic torque cut never prevented an impact (momentum
+      // arrives with torque already 0) but trapped the slider behind the
+      // boundary; budget (b) and thermal (c) bound sustained grinding into a
+      // stop. Flag and event stay as data markers only.
       flags |= FLAG_ENDZONE;
       if (!this->endzone_flagged_) {
         this->endzone_flagged_ = true;
@@ -685,7 +687,7 @@ bool SliderLab::run_experiment(const std::string &name, const std::string &param
 
   prog->raw_samples = prog->raw_samples || this->raw_mode_.load();
   if (prog->endstop_safe)
-    ESP_LOGW(TAG, "'%s' carries endstop_safe — end-zone interlock is BYPASSED for this run", name.c_str());
+    ESP_LOGI(TAG, "'%s' carries endstop_safe — obsolete no-op, the end-zone cut is a passive marker now", name.c_str());
 
   // meta for the dump header — safe to write here: player idle, dump refused while busy
   this->run_name_ = prog->name;
