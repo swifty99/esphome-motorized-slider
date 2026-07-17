@@ -29,6 +29,7 @@ CONF_AIN2_PIN = "ain2_pin"
 CONF_SYNC_PIN = "sync_pin"
 CONF_HTTP_PORT = "http_port"
 CONF_INVERT_DIRECTION = "invert_direction"
+CONF_ENABLED = "enabled"
 
 # ADC1 GPIO -> channel (ESP-IDF adc mapping; rig board is an ESP32-S2: GPIO9 -> ch8)
 ADC1_PIN_TO_CHANNEL = {
@@ -50,6 +51,11 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_SYNC_PIN, default=14): pins.internal_gpio_output_pin_number,
             cv.Optional(CONF_HTTP_PORT, default=80): cv.port,
             cv.Optional(CONF_INVERT_DIRECTION, default=False): cv.boolean,
+            # Motor-ownership arbiter: set false when slider_servo owns the
+            # bridge in the same firmware — setup() then returns before ANY HAL
+            # init (no LEDC/ADC/GPTimer/tick/HTTP), so there is no double PWM
+            # setup. The HA entities still exist (dormant, benign values).
+            cv.Optional(CONF_ENABLED, default=True): cv.boolean,
         }
     ).extend(cv.COMPONENT_SCHEMA),
     cv.only_on_esp32,
@@ -76,3 +82,4 @@ async def to_code(config):
     )
     cg.add(var.set_http_port(config[CONF_HTTP_PORT]))
     cg.add(var.set_invert_direction(config[CONF_INVERT_DIRECTION]))
+    cg.add(var.set_enabled(config[CONF_ENABLED]))

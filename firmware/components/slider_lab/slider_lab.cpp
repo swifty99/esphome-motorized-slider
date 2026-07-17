@@ -139,6 +139,17 @@ float clampf(float v, float lo, float hi) { return std::min(std::max(v, lo), hi)
 // ============================================================================
 
 void SliderLab::setup() {
+  // Motor-ownership arbiter: dormant when slider_servo owns the bridge in the
+  // same firmware. Return before ANY HAL init (no LEDC/ADC/GPTimer/tick task/
+  // HTTP server, no PSRAM recorder alloc) so there is no double PWM setup and
+  // PSRAM stays free for the servo. The template HA entities still resolve —
+  // their getters return the atomic defaults (position 0, tick 0) — so
+  // `labctl status` keeps working; only the lab instrument is inert.
+  if (!this->enabled_) {
+    ESP_LOGCONFIG(TAG, "slider_lab DISABLED (slider_servo owns the motor) — HAL not initialized");
+    return;
+  }
+
   // --- scope-sync pin (R8): LOW when idle ---
   gpio_config_t io = {};
   io.pin_bit_mask = 1ULL << this->sync_pin_;

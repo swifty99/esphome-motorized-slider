@@ -52,22 +52,175 @@ ota:
 # OTA only, no slider_lab tick) and stays flashable.
 safe_mode:
 
-# NOTE: do NOT add ESPHome's web_server here — slider_lab runs its own
-# esp_http_server on port 80 for GET /lab/dump.csv.
+# NOTE: do NOT add ESPHome's web_server here — the active component runs its
+# own esp_http_server on port 80 (servo: /servo/dump.csv, lab: /lab/dump.csv).
+#
+# 2026-07-18: slider_servo (the delivered product) now owns the motor; slider_lab
+# is present but DISABLED (enabled: false) so there is exactly one bridge owner
+# and no double PWM setup. Flip enabled to true here (and slider_servo out, or
+# its enabled off) to get the Phase-1 identification instrument back — one
+# `labctl flash`. The lab HA entities stay registered while dormant so
+# `labctl status` keeps reporting uptime/position (0 while dormant).
 slider_lab:
   id: lab
-  adc_pin: 9    # pot wiper, ADC1 ch8, 13-bit, ATTEN_DB_12, 4 samples/tick
-  ain1_pin: 11  # DRV8833 AIN1 — forward drive side
-  ain2_pin: 10  # DRV8833 AIN2
-  sync_pin: 14  # scope sync (as wired on the rig): HIGH while a program runs, 1 ms LOW blip per segment
+  enabled: false  # servo owns the bridge; lab HAL not initialized
+  # allow_other_uses: the servo and the lab target the same fixed rig pins;
+  # only one owns the bridge at runtime (arbiter above), so the overlap is
+  # declared intentional instead of a conflict.
+  adc_pin: {number: 9, allow_other_uses: true}    # pot wiper, ADC1 ch8
+  ain1_pin: {number: 11, allow_other_uses: true}  # L9110 AIN1 — forward drive side
+  ain2_pin: {number: 10, allow_other_uses: true}  # L9110 AIN2
+  sync_pin: {number: 14, allow_other_uses: true}  # scope sync
   http_port: 80
   # invert_direction: true  # set if goto() runs away from the target
 
+# slider_servo — the servo controller (docs/controller-spec.md, §2 graph core).
+# Drives GPIO9/11/10 exactly like the lab did. Boots IDLE with ZERO torque and
+# holds the current position; it only moves when "Servo Target" is set. Dump:
+# http://192.168.178.115/servo/dump.csv
+slider_servo:
+  id: servo
+  adc_pin: {number: 9, allow_other_uses: true}    # pot wiper, ADC1 ch8
+  ain1_pin: {number: 11, allow_other_uses: true}  # L9110 AIN1 — fwd (positive duty = position up)
+  ain2_pin: {number: 10, allow_other_uses: true}  # L9110 AIN2
+  sync_pin: {number: 14, allow_other_uses: true}  # scope sync: HIGH while driving
+  http_port: 80
+  # invert_direction: true  # set if a forward command drives position DOWN
+  # recorder_capacity: 45000    # records in PSRAM (45 s at 1 kHz)
+  # §5 tunables (defaults = spec). HIL bring-up nudges settle times UP (§5:
+  # sim value, post-pulse creep is unmodelled — Block 4c):
+  # tol: 0.30
+  # impulse_settle_ms: 120
+  # impulse_settle_short_ms: 70
+
 # ---------------------------------------------------------------------------
-# R9 — HA surface
+# slider_servo — HA control surface
+# ---------------------------------------------------------------------------
+
+number:
+  # Servo Target — set to command a move to this position (0..100 %). No
+  # initial_value / no restore: set_action must NOT fire at boot (that would
+  # command a move on power-up). The core clamps into the usable span [4, 96].
+  - platform: template
+    name: "Servo Target"
+    id: servo_target
+    min_value: 0
+    max_value: 100
+    step: 0.5
+    unit_of_measurement: "%"
+    mode: box
+    optimistic: true
+    restore_value: false
+    set_action:
+      - lambda: |-
+          id(servo).command_target(x);
+  # Servo Speed — 0 (or >=120) = fast move; 1..45 = CRAWL (slow pulse train);
+  # 46..119 rounds up to a fast move (spec §5). Applied with the next Target.
+  - platform: template
+    name: "Servo Speed"
+    id: servo_speed
+    min_value: 0
+    max_value: 300
+    step: 5
+    unit_of_measurement: "%/s"
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 0
+    set_action:
+      - lambda: |-
+          id(servo).command_speed(x);
+
+# ---------------------------------------------------------------------------
+# R9 — lab HA surface (dormant while slider_lab is disabled)
 # ---------------------------------------------------------------------------
 
 sensor:
+  # ---- slider_servo sensors ----
+  - platform: template
+    name: "Servo Position"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: 200ms
+    lambda: |-
+      return id(servo).get_position_percent();
+  - platform: template
+    name: "Servo p_hat"
+    unit_of_measurement: "%"
+    accuracy_decimals: 2
+    entity_category: diagnostic
+    update_interval: 200ms
+    lambda: |-
+      return id(servo).get_p_hat();
+  - platform: template
+    name: "Servo v_hat"
+    unit_of_measurement: "%/s"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    update_interval: 200ms
+    lambda: |-
+      return id(servo).get_v_hat();
+  - platform: template
+    name: "Servo Target Echo"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      return id(servo).get_target();
+  - platform: template
+    name: "Servo Thermal Avg"
+    accuracy_decimals: 3
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      return id(servo).get_thermal_avg();
+  - platform: template
+    name: "Servo Pulses"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 500ms
+    lambda: |-
+      return id(servo).get_pulses();
+  - platform: template
+    name: "Servo Kicks"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 500ms
+    lambda: |-
+      return id(servo).get_kicks();
+  - platform: template
+    name: "Servo Overshoots"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 500ms
+    lambda: |-
+      return id(servo).get_overshoots();
+  # A9 tick health: p99 execution time + missed ticks (must stay 0 at 1 kHz)
+  - platform: template
+    name: "Servo Tick p99"
+    unit_of_measurement: "µs"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      return id(servo).get_tick_p99_us();
+  - platform: template
+    name: "Servo Missed Ticks"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      return id(servo).get_missed_ticks();
+  - platform: template
+    name: "Servo ADC Errors"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      return id(servo).get_adc_error_count();
+
+  # ---- slider_lab sensors (dormant: return 0 while disabled) ----
   # position sensor, ~10 Hz, sanity only (provisional legacy endpoints:
   # raw 8000 -> 0 %, raw 100 -> 100 %, wiring inverted)
   - platform: template
@@ -103,12 +256,43 @@ sensor:
 
 text_sensor:
   - platform: template
+    name: "Servo State"
+    update_interval: 250ms
+    lambda: |-
+      return id(servo).get_state_name();
+  - platform: template
+    name: "Servo Settle Flag"
+    entity_category: diagnostic
+    update_interval: 250ms
+    lambda: |-
+      return id(servo).get_settle_name();
+  - platform: template
+    name: "Servo Release Reason"
+    entity_category: diagnostic
+    update_interval: 250ms
+    lambda: |-
+      return id(servo).get_release_name();
+  - platform: template
     name: "Lab Player State"
     update_interval: 250ms
     lambda: |-
       return id(lab).get_player_state();
 
 binary_sensor:
+  - platform: template
+    name: "Servo Settled"
+    lambda: |-
+      return id(servo).is_settled();
+  - platform: template
+    name: "Servo Recording Full"
+    entity_category: diagnostic
+    lambda: |-
+      return id(servo).is_recorder_full();
+  - platform: template
+    name: "Servo Sync Pin"
+    entity_category: diagnostic
+    lambda: |-
+      return id(servo).get_sync_level();
   - platform: template
     name: "Lab Recording Full"
     lambda: |-
@@ -121,6 +305,20 @@ binary_sensor:
       return id(lab).get_sync_level();
 
 switch:
+  # Servo Abort — L1 clamps torque to 0 within one tick (safety.set_abort). The
+  # controller is not told politely; it yields via the persistent-interlock
+  # path. Turn OFF to resume; a held target re-drives.
+  - platform: template
+    name: "Servo Abort"
+    id: servo_abort
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_on_action:
+      - lambda: |-
+          id(servo).set_abort(true);
+    turn_off_action:
+      - lambda: |-
+          id(servo).set_abort(false);
   # R4(d): abort — torque 0 within one tick; player refuses to start while ON
   - platform: template
     name: "Lab Abort"
@@ -147,6 +345,13 @@ switch:
           id(lab).set_raw_mode(false);
 
 button:
+  # Servo Release — hand the slider back (row 23): go RELEASED, adopt at rest,
+  # never fight. A new Target after release is stored and runs once still.
+  - platform: template
+    name: "Servo Release"
+    on_press:
+      - lambda: |-
+          id(servo).command_release();
   # campaign programs with their protocol defaults (measurement-campaign.md)
   - platform: template
     name: "M1 Noise Floor"

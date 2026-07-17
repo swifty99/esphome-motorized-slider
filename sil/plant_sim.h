@@ -12,8 +12,8 @@
 #include <cstdint>
 #include <random>
 
-#include "../firmware/components/slider_servo/core/plant_model.h"
-#include "../firmware/components/slider_servo/core/servo_params.h"
+#include "../firmware/components/slider_servo/plant_model.h"
+#include "../firmware/components/slider_servo/servo_params.h"
 
 namespace slider_sil {
 

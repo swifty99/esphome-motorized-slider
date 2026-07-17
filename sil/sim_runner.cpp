@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-#include "../firmware/components/slider_servo/core/servo.h"
+#include "../firmware/components/slider_servo/servo.h"
 #include "plant_sim.h"
 
 using namespace slider_servo;

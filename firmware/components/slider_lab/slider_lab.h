@@ -98,6 +98,10 @@ class SliderLab : public Component {
   }
   void set_http_port(uint16_t port) { this->http_port_ = port; }
   void set_invert_direction(bool inv) { this->invert_direction_ = inv; }
+  // Motor-ownership arbiter (docs/handover-servo-2026-07-18.md): when false,
+  // setup() returns before any HAL init so slider_servo can own the bridge in
+  // the same firmware without a double PWM setup.
+  void set_enabled(bool en) { this->enabled_ = en; }
 
   // ---- HA surface (called from YAML lambdas, main task) ----
   bool run_experiment(const std::string &name, const std::string &params_json);
@@ -159,6 +163,7 @@ class SliderLab : public Component {
   uint8_t sync_pin_{14};
   uint16_t http_port_{80};
   bool invert_direction_{false};
+  bool enabled_{true};  // false = dormant (servo owns the motor); see set_enabled
 
   // handles
   adc_oneshot_unit_handle_t adc_{nullptr};

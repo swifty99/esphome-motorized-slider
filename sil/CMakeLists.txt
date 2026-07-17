@@ -13,7 +13,7 @@ project(slider_sil CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../firmware/components/slider_servo/core)
+set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../firmware/components/slider_servo)
 
 add_executable(sim_runner
   sim_runner.cpp
