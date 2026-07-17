@@ -216,6 +216,18 @@ Repeatability within triples: ~±10–15 % of travel. The sim under-predicts by
 on-device auto-ident can reproduce (auto-ident-spec #8). Note the fwd/rev
 asymmetry (rev needs ~1.3× the width for the same travel below 30 ms).
 
+**Position resolution (runs 144–147, midday session):** ladders at 22/65/78 %
+plus a rev-only recheck at 50 %. **Fwd is position-independent** (10 ms med
++2.33/+2.44/+2.44 vs +2.64 mid-travel — within pulse scatter). **Rev is
+position-dependent by ×1.8**: 10 ms med −1.87/−1.76/−1.84 at 22/65/78 but
+−1.06 at 50 (reproduces the night value −1.02 exactly; 12 vs 6 shots, disjoint
+ranges). Mid-travel is a genuine rev low-delivery spot — the table's rev
+column above is valid **only near mid-travel**; the ~1.3× width asymmetry
+statement holds there but shrinks to ~1.15× elsewhere. Side finding: 3 ms fwd
+at 78 % is essentially dead (+0.04). Consequence: auto-ident #8 must sample
+rev at ≥2 positions; the endgame lands unidirectionally fwd, so the risk is
+confined to re-approach dosing.
+
 ## 4d. M8 dither: breakaway law (objective part)
 
 Dither grid (square dither on a slowly ramped base duty, own undithered

@@ -344,3 +344,30 @@
   ~30 min — keine weitere Degradation bis 2 h. Dwell-Kampagne damit KOMPLETT
   (D0–D3); Feinstruktur bleibt Puls-Streuung, Gesetz fürs Spec bestätigt.
   Rig-Zustand: idle @ 68.2 %, adc errors 0, kein Reboot (uptime 4.05 h).
+- 2026-07-17 12:15 `144_impulse_ladder.csv`: Loop-Iteration 1: Impulstabelle Positionsachse — Ladder A @ 22% (warm nach D3)
+- 2026-07-17 12:16 `145_impulse_ladder.csv`: Loop-Iteration 1: Impulstabelle Positionsachse — Ladder B @ 78% (Band-Oberkante)
+- 2026-07-17 12:17 `146_impulse_ladder.csv`: Loop-Iteration 1: Impulstabelle Positionsachse — Ladder C @ 65% (M7-Anker + Parkposition Dwell)
+- 2026-07-17 12:20 `147_impulse_ladder.csv`: Loop-Iteration 1: Disambiguierung rev@50 — M7-Tabelle sagt 10ms rev -1.02, Positionen 22/65/78 heute ~-1.8
+
+## Loop-Session (Mittag, Orchestrator solo) — Impulstabelle Positionsachse
+
+- Runs 144/145/146: impulse_ladder @ 22 / 78 / 65 %, duty 0.8, widths [3,5,8,10] ms,
+  3 reps, beide Richtungen, 72/72 Events uncut. Run 147: Disambiguierung rev @ 50
+  (nur bwd, [5,10] ms).
+- **FWD ist positionsunabhängig** (10 ms med: +2.33/+2.44/+2.44 @ 22/78/65 vs M7
+  mid-travel +2.64 — alles innerhalb der Puls-Streuung ±10–15 %).
+- **REV ist positionsABHÄNGIG ×1.8**: 10 ms med −1.87/−1.76/−1.84 @ 22/78/65,
+  aber −1.06 @ 50 (Run 147) = exakte Reproduktion der M7-Nachtmessung (−1.02).
+  Mid-travel ist ein echter rev-Low-Delivery-Spot, kein Messfehler: 12 Shots
+  @ 22/65/78 alle ≥1.53, 6 Shots @ 50 (Tag+Nacht) alle ≤1.32 — disjunkt.
+  Die fwd/rev-Asymmetrie ist also positionsabhängig (~2.6× @ 50, ~1.3× sonst).
+- Randbefund: 3 ms fwd @ 78 praktisch tot (med +0.04 vs +0.26/+0.32 @ 22/65) —
+  Sub-Threshold-Pulse sind positionssensitiv.
+- Konsequenz Controller/auto-ident: M7-Tabelle als FF-Lookup ist fwd-seitig
+  global gültig, rev-seitig NUR mid-travel — auto-ident #8 sollte rev an ≥2
+  Positionen samplen; Endgame landet unidirektional (fwd), rev dient der
+  Re-Approach-Dosierung → Präzisionsrisiko begrenzt, aber dokumentationspflichtig.
+- Rig-Endzustand: idle @ 46.0 %, adc errors 0, thermal 0, kein Reboot.
+  Ruhe-Uhr läuft ab 12:20 → nächster Loop-Schritt: gepaarte Kalt-Probe
+  (10 ms fwd kalt + 30 s später identer Warm-Referenzpuls; Paar-Ratio statt
+  Vergleich gegen globale Warm-Tabelle — tötet die Einzelpuls-Streuung).
