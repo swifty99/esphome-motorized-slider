@@ -248,3 +248,14 @@
   98.5→50.7 % OHNE endstop_safe (der frühere Trap-Fall). Begrenzung gegen
   Dauergrinding: Budget- + Thermal-Interlock. labctl-WARN-Wortlaut („interlock
   cut torque") ist jetzt irreführend — Mini-Cleanup offen.
+
+## Tages-Session (autonom, Jan 8h AFK) — Block D0: opportunistischer Dwell-Punkt
+
+- Dwell-Paar 10 ms fwd @ duty 0.8, Position ~50–53 % (Runs 92/93):
+  KALT (Dwell ~8.4 min, aus Uptime rekonstruiert): 50.5 → 53.1 % = **+2.6 %**.
+  WARM (Dwell ~20 s): siehe Statuszeile nach Run 93.
+  M7-Warm-Referenz (0.4–1 s Dwell): +2.64 % → bei ~8 min KEIN Kalt-Malus
+  erkennbar an dieser Position. Längere Dwells (30/60+ min) über den Tag geplant.
+- 2026-07-17 08:02 `95_dither.csv`: coder cycle 2: endzone-marker wording check (0.8 blip into top end zone)
+- 2026-07-17 08:03 `96_reversal.csv`: coder cycle 2: approach_ms param verification
+- 2026-07-17 08:04 `97_breakaway_grid.csv`: coder cycle 2: move_threshold default 5.0 verification
