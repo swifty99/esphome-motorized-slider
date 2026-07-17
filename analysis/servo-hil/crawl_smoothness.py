@@ -68,11 +68,14 @@ false-released crawl can score deceptively low simply because it never moved.
 """
 import sys
 
-STATE = {0: "IDLE", 1: "MOVE", 2: "BRAKE", 3: "PULSE", 4: "WAIT", 5: "CRAWL", 6: "RELEASED"}
+STATE = {0: "IDLE", 1: "MOVE", 2: "BRAKE", 3: "PULSE", 4: "WAIT", 5: "CRAWL",
+         6: "RELEASED", 7: "GLIDE"}
 SETTLE = {0: "none", 1: "reached", 2: "gave_up", 3: "adopted"}
 RELEASE = {0: "none", 1: "grab", 2: "interlock", 3: "watchdog", 4: "fault", 5: "command"}
 
 CRAWL = 5
+GLIDE = 7
+SLOW_STATES = (CRAWL, GLIDE)   # both slow modes are pulse trains -> same scorecard
 IDLE = 0
 COAST_MS = 60          # coast window after each pulse (ms)
 ROLL_THRESH = 10.0     # %/s, "kept rolling" velocity threshold
@@ -148,10 +151,22 @@ def find_pulses(span):
 
 def analyze(rows):
     """Return a dict of metrics for one trace, or {'empty': reason} if no usable CRAWL."""
-    crawl_idx = [i for i, r in enumerate(rows) if r["state"] == CRAWL]
+    crawl_idx = [i for i, r in enumerate(rows) if r["state"] in SLOW_STATES]
     if not crawl_idx:
-        return {"empty": "no CRAWL(5) rows in trace"}
-    s0, s1 = crawl_idx[0], crawl_idx[-1]
+        return {"empty": "no CRAWL(5)/GLIDE(7) rows in trace"}
+    # The recorder is a free-running ring that can hold SEVERAL moves. Split the
+    # slow-state rows into episodes (a gap > EPISODE_GAP_MS starts a new move) and
+    # score only the LAST (most recent) one — otherwise the span stretches across
+    # moves + the idle between them and the scorecard is meaningless.
+    EPISODE_GAP_MS = 500
+    episodes = [[crawl_idx[0]]]
+    for i in crawl_idx[1:]:
+        if rows[i]["t"] - rows[episodes[-1][-1]]["t"] > EPISODE_GAP_MS:
+            episodes.append([i])
+        else:
+            episodes[-1].append(i)
+    ep = episodes[-1]
+    s0, s1 = ep[0], ep[-1]
     span = rows[s0:s1 + 1]
     if len(span) < 2:
         return {"empty": "CRAWL span too short (<2 rows)"}

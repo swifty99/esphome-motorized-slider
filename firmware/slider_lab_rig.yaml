@@ -209,6 +209,103 @@ number:
     set_action:
       - lambda: |-
           id(servo).set_crawl_land_zone(x);
+  # --- GLIDE knobs (glide-mode-spec.md, 2026-07-17): "go slow but NEVER STOP".
+  # Set Servo Glide = 1 and then a slow Servo Speed (>=1) uses the continuous
+  # keep-rolling GLIDE mode instead of the stop-start CRAWL. Default 0 = CRAWL
+  # (boot-identical to today). Not-stopping is the priority: the requested rate
+  # is clamped UP to Glide Floor. A/B GLIDE vs CRAWL live with this toggle.
+  - platform: template
+    name: "Servo Glide"
+    id: servo_glide
+    min_value: 0
+    max_value: 1
+    step: 1
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 0
+    set_action:
+      - lambda: |-
+          id(servo).set_glide(x);
+  # never-stop floor (%/s): the slowest rate the slider still never stops at on
+  # this plant (~40-60, HIL-tuned). Sub-floor Servo Speed requests round up.
+  - platform: template
+    name: "Servo Glide Floor"
+    id: servo_glide_floor
+    min_value: 10
+    max_value: 120
+    step: 5
+    unit_of_measurement: "%/s"
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 40
+    set_action:
+      - lambda: |-
+          id(servo).set_glide_floor(x);
+  # target %-travel per keep-rolling kick (small = quieter, tighter cadence)
+  - platform: template
+    name: "Servo Glide Step"
+    id: servo_glide_step
+    min_value: 0.1
+    max_value: 2.0
+    step: 0.05
+    unit_of_measurement: "%"
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 0.4
+    set_action:
+      - lambda: |-
+          id(servo).set_glide_step(x);
+  # keep-rolling settle (ms): short forced gap after a kick — the next kick lands
+  # before re-stick. Larger = re-sticks (stop-start); too small = wasted kicks.
+  - platform: template
+    name: "Servo Glide Settle"
+    id: servo_glide_settle
+    min_value: 0
+    max_value: 60
+    step: 1
+    unit_of_measurement: "ms"
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 3
+    set_action:
+      - lambda: |-
+          id(servo).set_glide_settle_ms((int) x);
+  # v_roll (%/s): fire a kick early when the short p_hat-progress window drops to
+  # this — "about to re-stick". Just above the 25 %/s progress noise floor.
+  - platform: template
+    name: "Servo Roll Floor"
+    id: servo_v_roll
+    min_value: 5
+    max_value: 120
+    step: 5
+    unit_of_measurement: "%/s"
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 30
+    set_action:
+      - lambda: |-
+          id(servo).set_v_roll(x);
+  # coast zone (%): remaining distance at which GLIDE hands to the single gentle
+  # forward seat (nail first shot, no judder). 0 = crawl_land_zone / endgame_zone.
+  - platform: template
+    name: "Servo Coast Zone"
+    id: servo_coast_zone
+    min_value: 0.0
+    max_value: 3.5
+    step: 0.1
+    unit_of_measurement: "%"
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 0.8
+    set_action:
+      - lambda: |-
+          id(servo).set_coast_zone(x);
 
 # ---------------------------------------------------------------------------
 # R9 — lab HA surface (dormant while slider_lab is disabled)

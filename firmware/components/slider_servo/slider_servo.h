@@ -116,6 +116,17 @@ class SliderServo : public Component {
   void set_crawl_w_gain(float v) { this->cfg_.crawl_w_gain = v; }
   void set_crawl_settle_ms(int v) { this->cfg_.crawl_settle_ms = v; }
   void set_crawl_land_zone(float v) { this->cfg_.crawl_land_zone = v; }
+  // GLIDE (glide-mode-spec.md): continuous keep-rolling slow mode. glide>0 routes
+  // a slow request to State::GLIDE instead of CRAWL. Default off = CRAWL.
+  void set_glide(float v) { this->cfg_.glide = v; }
+  void set_glide_floor(float v) { this->cfg_.glide_floor = v; }
+  void set_glide_step(float v) { this->cfg_.glide_step = v; }
+  void set_glide_settle_ms(int v) { this->cfg_.glide_settle_ms = v; }
+  void set_v_roll(float v) { this->cfg_.v_roll = v; }
+  void set_glide_prog_win(int v) { this->cfg_.glide_prog_win = v; }
+  void set_glide_runaway_v(float v) { this->cfg_.glide_runaway_v = v; }
+  void set_glide_max_gap_ms(int v) { this->cfg_.glide_max_gap_ms = v; }
+  void set_coast_zone(float v) { this->cfg_.coast_zone = v; }
   void set_thermal_avg_max(float v) { this->cfg_.thermal_avg_max = v; }
   void set_u_max(float v) { this->cfg_.u_max = v; }
 

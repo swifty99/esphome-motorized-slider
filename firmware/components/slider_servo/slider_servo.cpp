@@ -306,7 +306,8 @@ void SliderServo::tick_() {
   // 5) scope sync: HIGH while the controller is actively working
   const core::State st = this->servo_.controller().state();
   const bool driving = st == core::State::MOVE || st == core::State::BRAKE ||
-                       st == core::State::PULSE || st == core::State::CRAWL;
+                       st == core::State::PULSE || st == core::State::CRAWL ||
+                       st == core::State::GLIDE;
   gpio_set_level((gpio_num_t) this->sync_pin_, driving ? 1 : 0);
 
   // 6) snapshot for sensors + recorder
@@ -425,6 +426,7 @@ std::string SliderServo::get_state_name() const {
     case core::State::WAIT: return "wait";
     case core::State::CRAWL: return "crawl";
     case core::State::RELEASED: return "released";
+    case core::State::GLIDE: return "glide";
   }
   return "?";
 }

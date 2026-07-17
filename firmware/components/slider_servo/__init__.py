@@ -45,6 +45,15 @@ CONF_CRAWL_STEP = "crawl_step"
 CONF_CRAWL_W_GAIN = "crawl_w_gain"
 CONF_CRAWL_SETTLE_MS = "crawl_settle_ms"
 CONF_CRAWL_LAND_ZONE = "crawl_land_zone"
+CONF_GLIDE = "glide"
+CONF_GLIDE_FLOOR = "glide_floor"
+CONF_GLIDE_STEP = "glide_step"
+CONF_GLIDE_SETTLE_MS = "glide_settle_ms"
+CONF_V_ROLL = "v_roll"
+CONF_GLIDE_PROG_WIN = "glide_prog_win"
+CONF_GLIDE_RUNAWAY_V = "glide_runaway_v"
+CONF_GLIDE_MAX_GAP_MS = "glide_max_gap_ms"
+CONF_COAST_ZONE = "coast_zone"
 CONF_THERMAL_AVG_MAX = "thermal_avg_max"
 CONF_U_MAX = "u_max"
 
@@ -101,6 +110,18 @@ CONFIG_SCHEMA = cv.All(
             # crawl carries to within this %-of-target before the endgame seats
             # (0 = endgame_zone; small = no settling lunge/judder)
             cv.Optional(CONF_CRAWL_LAND_ZONE, default=0.0): cv.float_range(min=0.0, max=3.5),
+            # GLIDE (glide-mode-spec.md): continuous keep-rolling slow mode.
+            # glide=0 (default) => slow moves use CRAWL, byte-identical. glide>0
+            # routes them to State::GLIDE (never stop, run at glide_floor).
+            cv.Optional(CONF_GLIDE, default=0.0): cv.float_range(min=0.0, max=1.0),
+            cv.Optional(CONF_GLIDE_FLOOR, default=40.0): cv.float_range(min=10.0, max=120.0),
+            cv.Optional(CONF_GLIDE_STEP, default=0.4): cv.float_range(min=0.1, max=3.0),
+            cv.Optional(CONF_GLIDE_SETTLE_MS, default=3): cv.int_range(min=0, max=200),
+            cv.Optional(CONF_V_ROLL, default=30.0): cv.float_range(min=5.0, max=120.0),
+            cv.Optional(CONF_GLIDE_PROG_WIN, default=12): cv.int_range(min=2, max=64),
+            cv.Optional(CONF_GLIDE_RUNAWAY_V, default=200.0): cv.float_range(min=50.0, max=500.0),
+            cv.Optional(CONF_GLIDE_MAX_GAP_MS, default=20): cv.int_range(min=4, max=200),
+            cv.Optional(CONF_COAST_ZONE, default=0.8): cv.float_range(min=0.0, max=3.5),
             cv.Optional(CONF_THERMAL_AVG_MAX, default=0.50): cv.float_range(min=0.1, max=1.0),
             cv.Optional(CONF_U_MAX, default=0.90): cv.float_range(min=0.3, max=1.0),
         }
@@ -140,5 +161,14 @@ async def to_code(config):
     cg.add(var.set_crawl_w_gain(config[CONF_CRAWL_W_GAIN]))
     cg.add(var.set_crawl_settle_ms(config[CONF_CRAWL_SETTLE_MS]))
     cg.add(var.set_crawl_land_zone(config[CONF_CRAWL_LAND_ZONE]))
+    cg.add(var.set_glide(config[CONF_GLIDE]))
+    cg.add(var.set_glide_floor(config[CONF_GLIDE_FLOOR]))
+    cg.add(var.set_glide_step(config[CONF_GLIDE_STEP]))
+    cg.add(var.set_glide_settle_ms(config[CONF_GLIDE_SETTLE_MS]))
+    cg.add(var.set_v_roll(config[CONF_V_ROLL]))
+    cg.add(var.set_glide_prog_win(config[CONF_GLIDE_PROG_WIN]))
+    cg.add(var.set_glide_runaway_v(config[CONF_GLIDE_RUNAWAY_V]))
+    cg.add(var.set_glide_max_gap_ms(config[CONF_GLIDE_MAX_GAP_MS]))
+    cg.add(var.set_coast_zone(config[CONF_COAST_ZONE]))
     cg.add(var.set_thermal_avg_max(config[CONF_THERMAL_AVG_MAX]))
     cg.add(var.set_u_max(config[CONF_U_MAX]))
