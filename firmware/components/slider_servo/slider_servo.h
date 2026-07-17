@@ -140,6 +140,9 @@ class SliderServo : public Component {
   std::string get_state_name() const;
   std::string get_settle_name() const;
   std::string get_release_name() const;
+  // reset reason latched at boot (esp_reset_reason) — surfaces WHY the last
+  // reboot happened (poweron / SW / panic / task-wdt / brownout ...).
+  std::string get_reset_reason() const { return this->reset_reason_; }
 
   // auto-ident (Block 6) writes the identified calib here; inert for now.
   void save_calib();
@@ -226,6 +229,7 @@ class SliderServo : public Component {
   // LEDC duty cache (skip redundant register writes in the tick)
   uint32_t ledc_last_[2]{0xFFFFFFFF, 0xFFFFFFFF};
   bool ready_{false};  // setup completed; tick may drive
+  const char *reset_reason_{"?"};  // latched from esp_reset_reason() in setup()
 };
 
 }  // namespace slider_servo_hal

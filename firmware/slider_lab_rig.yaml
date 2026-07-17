@@ -86,7 +86,10 @@ slider_servo:
   sync_pin: {number: 14, allow_other_uses: true}  # scope sync: HIGH while driving
   http_port: 80
   # invert_direction: true  # set if a forward command drives position DOWN
-  # recorder_capacity: 45000    # records in PSRAM (45 s at 1 kHz)
+  # 12 s ring: a move is ~1 s, and the servo tick (prio 24) shares CPU with the
+  # HTTP dump so it streams ~80 KB/s — 12 s dumps fully in ~9 s, well under the
+  # firmware's 30 s dump cap. (45 s would truncate and lose the recent move.)
+  recorder_capacity: 12000
   # §5 tunables (defaults = spec). HIL bring-up nudges settle times UP (§5:
   # sim value, post-pulse creep is unmodelled — Block 4c):
   # tol: 0.30
@@ -272,6 +275,12 @@ text_sensor:
     update_interval: 250ms
     lambda: |-
       return id(servo).get_release_name();
+  - platform: template
+    name: "Servo Reset Reason"
+    entity_category: diagnostic
+    update_interval: 30s
+    lambda: |-
+      return id(servo).get_reset_reason();
   - platform: template
     name: "Lab Player State"
     update_interval: 250ms

@@ -11,6 +11,7 @@
 #include "esphome/core/version.h"
 
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 #include <lwip/sockets.h>
 
 namespace esphome {
@@ -28,7 +29,11 @@ constexpr ledc_timer_bit_t kPwmRes = LEDC_TIMER_12_BIT;
 constexpr uint32_t kPwmFull = 1u << 12;
 // R6 dump-session guards (same latch fix as the lab dump handler)
 constexpr int kDumpSendTimeoutS = 3;
-constexpr int64_t kDumpSessionCapUs = 30LL * 1000000;
+// 60 s (up from 30): under WiFi+tick contention a 12 s ring can stream slowly
+// (~15 KB/s worst case ≈ 40 s). 60 s lets it finish rather than truncate the
+// trailing idle. The servo dump pauses only LOGGING, never control, so a long
+// dump lockout is low-risk.
+constexpr int64_t kDumpSessionCapUs = 60LL * 1000000;
 
 int16_t sat16(long v) {
   if (v > 32767) return 32767;
@@ -44,6 +49,21 @@ float clampf(float v, float lo, float hi) { return std::min(std::max(v, lo), hi)
 // ============================================================================
 
 void SliderServo::setup() {
+  // latch WHY we last rebooted (diagnostic — a mid-operation reboot was seen
+  // once during bring-up, correlated with a pathological slow HTTP dump)
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: this->reset_reason_ = "poweron"; break;
+    case ESP_RST_EXT: this->reset_reason_ = "ext"; break;
+    case ESP_RST_SW: this->reset_reason_ = "sw/ota"; break;
+    case ESP_RST_PANIC: this->reset_reason_ = "panic"; break;
+    case ESP_RST_INT_WDT: this->reset_reason_ = "int_wdt"; break;
+    case ESP_RST_TASK_WDT: this->reset_reason_ = "task_wdt"; break;
+    case ESP_RST_WDT: this->reset_reason_ = "wdt"; break;
+    case ESP_RST_BROWNOUT: this->reset_reason_ = "brownout"; break;
+    case ESP_RST_DEEPSLEEP: this->reset_reason_ = "deepsleep"; break;
+    default: this->reset_reason_ = "other"; break;
+  }
+
   // --- scope-sync pin: LOW when idle, readable back (INPUT_OUTPUT) ---
   gpio_config_t io = {};
   io.pin_bit_mask = 1ULL << this->sync_pin_;
@@ -306,7 +326,9 @@ void SliderServo::snapshot_(float z, float duty, uint16_t tick_us) {
   this->pos_pct_.store(z);
   this->p_hat_.store(obs.p_hat());
   this->v_hat_.store(obs.v_hat());
-  this->target_echo_.store(ctl.target());
+  // show where we actually hold when settled (else the last commanded target);
+  // avoids the idle display reading the controller's default target of 50.
+  this->target_echo_.store(ctl.settled() ? ctl.hold() : ctl.target());
   this->thermal_avg_.store(this->servo_.safety().thermal_avg());
   this->pulses_.store(log.pulses);
   this->kicks_.store(log.kicks);
@@ -531,6 +553,11 @@ esp_err_t SliderServo::handle_dump_(httpd_req_t *req) {
     if (used > bufsz - 128) {
       err = httpd_resp_send_chunk(req, buf, used);
       used = 0;
+      // Yield after every chunk: this httpd task (low prio) is CPU-bound
+      // building rows while the 1 kHz tick (prio 24) + WiFi (23) run — without
+      // an explicit yield the IDLE task can starve and trip the task watchdog
+      // on a long/slow dump. ~1 ms per 8 KB chunk is negligible (~70 ms total).
+      vTaskDelay(1);
     }
   }
   if (err == ESP_OK && used > 0)
