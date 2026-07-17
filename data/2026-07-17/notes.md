@@ -421,3 +421,20 @@
   @ ~46 % (erwartet: warm ~2.0, train ~2.6 falls Boost positionsunabhängig).
   Rig nach P3 @ 73.7 % → Umparken auf ~46 %.
 - 2026-07-17 14:42 `156_impulse_ladder.csv`: Positionierung: Park @ 46% fuer P4 (Out-of-Band-Replikation, erweitertes Protokoll)
+- 2026-07-17 15:27 `157_dither.csv`: Paar-Probe P4 KALT: 10ms fwd @0.8 nach ~40min Ruhe @ 47% (Out-of-Band-Replikation, erweitertes Protokoll)
+- 2026-07-17 15:28 `158_dither.csv`: Paar-Probe P4 WARM-Referenz: 10ms fwd @0.8, ~40s nach Kalt-Puls (Run 157)
+- 2026-07-17 15:28 `159_impulse_ladder.csv`: P4 TRAIN-Kontext: 2x 10ms fwd, 400ms Abstand — Test Train-Boost out-of-band
+- **P4 @ 47 % out-of-band, erweitert (Runs 157/158/159)**: kalt (40 min) +1.58,
+  warm-Ref +2.29 → **Ratio 0.69** (erstes Paar mit substanziellem Malus);
+  Train-Pulse +1.63/+1.58 = KEIN Boost (aber Ladder lief 50.7→54.0 in die
+  Band-Unterkante — Position/Kontext erneut konfundiert). Paar-Design-Schwäche
+  erkannt: kalt und warm liegen ~1.6 % auseinander, Feinstruktur der Position
+  ist ein eingebauter Confounder.
+- **Gepoolter Stand (16 isolierte 10-ms-fwd-Pulse)**: Kalt-Malus mild und
+  streuungsdominiert ~×0.85±0.15 (Ratios 0.99/0.91/0.94/0.69), NICHT ×0.5;
+  in-Band isoliert ~1.4, außerhalb ~1.8–2.15; M7-Tabelle +2.64 > ALLE
+  isolierten Messungen (max +2.29) → Tabellen-Optimismus steht; Train-Boost
+  existiert (P3 ×1.3), Magnitude positionsverschränkt unsicher.
+- plant-model §4c Caveat entsprechend abgeschwächt. P5 @ 65 (Band, größtes n)
+  als Abschluss-Replikation, danach Kampagnen-Wrap.
+- 2026-07-17 15:29 `160_impulse_ladder.csv`: Positionierung: Park @ 65% fuer P5 (Abschluss-Replikation im Band)
