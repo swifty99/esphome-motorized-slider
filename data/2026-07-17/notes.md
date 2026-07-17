@@ -408,3 +408,16 @@
 - Nächster Test P3 @ ~67 % (Band, Replikation) mit ERWEITERTEM Protokoll:
   kalt → 40 s → warm-Ref → sofort 2 Train-Pulse (400 ms Abstand) → misst
   Kalt/Warm-Ratio UND Train/Warm-Ratio in einer Iteration.
+- 2026-07-17 14:39 `153_dither.csv`: Paar-Probe P3 KALT: 10ms fwd @0.8 nach ~45min Ruhe @ 67% (Band-Replikation, erweitertes Protokoll)
+- 2026-07-17 14:40 `154_dither.csv`: Paar-Probe P3 WARM-Referenz: 10ms fwd @0.8, ~40s nach Kalt-Puls (Run 153)
+- 2026-07-17 14:40 `155_impulse_ladder.csv`: P3 TRAIN-Kontext: 2x 10ms fwd, 400ms Abstand, direkt nach Warm-Ref — Test des Train-Boosts
+- **P3 @ 67 % Band, erweitertes Protokoll (Runs 153/154/155)**: kalt (45 min)
+  +1.30, warm-Ref +1.38 → Ratio 0.94; TRAIN-Pulse (400 ms Abstand, direkt nach
+  Warm-Ref) +1.86/+1.75 = **Train-Boost ×1.3 DIREKT GEMESSEN**. Drei Paare:
+  0.99 / 0.91 / 0.94 → echter Dwell-Malus ≤10 %. Revision in findings-Doc +
+  plant-model §4c geschrieben: Delivery = f(Position) × g(Aktivität);
+  M7-Tabelle (dichter Kontext) überpredicted isolierte Pulse ~25–40 %.
+- Nächster Schritt P4: Out-of-Band-Replikation des erweiterten Protokolls
+  @ ~46 % (erwartet: warm ~2.0, train ~2.6 falls Boost positionsunabhängig).
+  Rig nach P3 @ 73.7 % → Umparken auf ~46 %.
+- 2026-07-17 14:42 `156_impulse_ladder.csv`: Positionierung: Park @ 46% fuer P4 (Out-of-Band-Replikation, erweitertes Protokoll)

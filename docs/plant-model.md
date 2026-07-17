@@ -216,6 +216,17 @@ Repeatability within triples: ~±10–15 % of travel. The sim under-predicts by
 on-device auto-ident can reproduce (auto-ident-spec #8). Note the fwd/rev
 asymmetry (rev needs ~1.3× the width for the same travel below 30 ms).
 
+**Activity-context caveat (paired probes, runs 148–155):** this table was
+measured in dense ladders (pulses every ~0.4–4 s plus recenter gotos). An
+**isolated** pulse — the endgame's actual use case — delivers only ~×0.7–0.75
+of these values (measured: warm isolated +1.38..+2.00 vs table +2.64 at the
+same positions; train pulses 400 ms apart recover ×1.3 immediately). True
+first-pulse-after-rest penalty beyond that is ≤10 % (pair ratios 0.99/0.91/0.94
+at 43–47 min dwell) — the earlier "×0.5–0.7 cold malus" reading of D1–D3
+conflated position and context with dwell. FF consequence: with this table the
+endgame systematically undershoots isolated pulses (safe direction; escalation
+covers it; settle takes longer than the SIL suggests).
+
 **Position resolution (runs 144–147, midday session):** ladders at 22/65/78 %
 plus a rev-only recheck at 50 %. **Fwd is position-independent** (10 ms med
 +2.33/+2.44/+2.44 vs +2.64 mid-travel — within pulse scatter). **Rev is
