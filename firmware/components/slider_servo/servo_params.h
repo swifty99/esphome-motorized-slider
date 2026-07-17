@@ -167,6 +167,45 @@ struct ServoConfig {
                                   // lunges after the small crawl steps). Crawl-
                                   // only; the fast-move endgame is untouched (A1).
 
+  // GLIDE (glide-mode-spec.md; gate answers 2026-07-17): "go there as slow as
+  // possible but NEVER STOP, nail it first shot, self-learning." A continuous
+  // keep-rolling kick train — re-kick BEFORE the slider re-sticks so motion
+  // never stalls and the belt never unloads. OPTIONAL; default disabled
+  // (glide == 0) => slow moves use CRAWL and SIL stays byte-identical. When
+  // glide > 0 a slow request (0 < v_req <= v_crawl_max) enters State::GLIDE.
+  // Reuses the CRAWL ratchet / self-adjust EMA / grab machinery.
+  float glide = 0.0f;             // 0 = off (CRAWL). >0 = GLIDE for slow moves.
+  float glide_floor = 40.0f;      // %/s never-stop floor: the requested rate is
+                                  // clamped UP to this so the kick cadence stays
+                                  // tight enough that the slider never re-sticks.
+                                  // On THIS plant (m/fk re-stick clock, spec §1)
+                                  // you cannot go slower AND never stop; not-
+                                  // stopping is the priority (gate Q1). HIL-tuned.
+  float glide_step = 0.4f;        // %; target per-kick travel (small = quiet,
+                                  // tight cadence). Reuses the crawl self-adjust
+                                  // width EMA (crawl_w_gain / crawl_w_scale_*).
+  int glide_settle_ms = 3;        // ms min forced gap after a kick — short so the
+                                  // next kick lands before re-stick (keep-rolling,
+                                  // vs the crawl 25–70 ms that lets it re-stick).
+  float v_roll = 30.0f;           // %/s short-window p̂-progress floor: at/below
+                                  // this the slider is about to re-stick -> fire
+                                  // early to keep rolling. Just above the 25 %/s
+                                  // progress noise floor (never v_hat, spec §1c).
+  int glide_prog_win = 12;        // ticks; short p̂-progress window for the keep-
+                                  // rolling detector. Short = fast but noisier.
+  float glide_runaway_v = 200.0f; // %/s: a kick over-delivered into a mini-flight
+                                  // -> skip the next kick, coast down (bounded).
+  int glide_max_gap_ms = 20;      // hard inter-kick cap (safety; ~2x worst re-
+                                  // stick time). A last-resort kick so it never
+                                  // stops. Kept ABOVE the rate cadence so it does
+                                  // not bind normally (a binding cap would push
+                                  // the plant ahead of the ratchet and read as a
+                                  // hand-drag). ratchet/rate_due drive the cadence.
+  float coast_zone = 0.8f;        // % remaining at which GLIDE hands to the gentle
+                                  // single forward seat (nail first shot, no
+                                  // judder — gate Q3). 0 => crawl_land_zone/
+                                  // endgame_zone. Stage 2 adds the learned coast.
+
   // watchdog (row 19): 2 x expected move time + 1 s; expected includes endgame
   float watchdog_endgame_s = 1.5f;
 

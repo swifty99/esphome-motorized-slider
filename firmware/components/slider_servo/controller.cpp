@@ -90,7 +90,7 @@ void Controller::release(ReleaseReason reason) {
 void Controller::notify_interlock(bool clamped) {
   // row 18: a persistent L1 clamp is not fought, it releases
   if (clamped && (state_ == State::MOVE || state_ == State::PULSE ||
-                  state_ == State::CRAWL)) {
+                  state_ == State::CRAWL || state_ == State::GLIDE)) {
     ilk_ticks_++;
     if (ilk_ticks_ > cfg_->ilk_yield_ms) release(ReleaseReason::INTERLOCK);
   } else {
@@ -130,6 +130,8 @@ float Controller::tick(float p_hat, float v_hat) {
       return tick_wait(p_hat);
     case State::CRAWL:
       return tick_crawl(p_hat);
+    case State::GLIDE:
+      return tick_glide(p_hat);
   }
   return 0.0f;
 }
@@ -282,9 +284,12 @@ float Controller::tick_brake(float v_hat) {
 float Controller::tick_pulse() {
   if (pulse_left_ > 0) {  // still emitting: exactly `width` ticks at +-duty
     pulse_left_--;
-    // CRAWL kicks may use a softer duty (acoustic); endgame stays at impulse_duty
-    const float duty = pulse_origin_ == State::CRAWL ? cfg_->crawl_impulse_duty
-                                                     : cfg_->impulse_duty;
+    // CRAWL/GLIDE kicks use the reverse-breakaway-safe duty; endgame stays at
+    // impulse_duty
+    const float duty = (pulse_origin_ == State::CRAWL ||
+                        pulse_origin_ == State::GLIDE)
+                           ? cfg_->crawl_impulse_duty
+                           : cfg_->impulse_duty;
     return duty * static_cast<float>(pulse_dir_);
   }
   // row 16: width elapsed — back to the origin state, settle timer running
@@ -296,6 +301,15 @@ float Controller::tick_pulse() {
     crawl_settle_left_ =
         cfg_->crawl_settle_ms > 0 ? cfg_->crawl_settle_ms : settle_ticks;
     crawl_adapt_pending_ = true;  // self-adjust learns from this pulse (no-op if crawl_step==0)
+  } else if (pulse_origin_ == State::GLIDE) {
+    state_ = State::GLIDE;
+    // keep-rolling: a SHORT forced gap so the next kick lands before re-stick
+    // (G3). The G1 negative control substitutes the long endgame settle, which
+    // lets the slider re-stick between kicks (stop-start) and fails G-T1.
+    glide_settle_left_ = SIL_BUG(bug_, G1_NO_KEEPROLL) ? cfg_->impulse_settle_ms
+                                                       : cfg_->glide_settle_ms;
+    glide_gap_ = 0;
+    crawl_adapt_pending_ = true;  // reuse the crawl self-adjust width learner
   } else {
     enter_wait(settle_ticks);
   }
@@ -339,10 +353,30 @@ void Controller::restart_motion(float p_hat) {
   p_at_pulse_valid_ = false;
   endgame_pulses_ = 0;
 
-  if (v_req_ > 0.0f) {  // row 26: CRAWL toward the target itself
+  if (v_req_ > 0.0f) {  // slow move toward the target itself (rows 26 / G1)
     dir_ = target_ >= p_hat ? 1 : -1;
     ratchet_ = p_hat;
     crawl_rate_ = v_req_;
+    crawl_settle_left_ = 0;
+    crawl_win_left_ = cfg_->crawl_degraded_win;
+    crawl_win_p0_ = p_hat;
+    if (cfg_->glide > 0.0f) {  // G1: keep-rolling GLIDE (glide-mode-spec §1)
+      // never-stop floor: run at least glide_floor so the kick cadence stays
+      // tight enough that the slider never re-sticks. not-stopping is the
+      // priority (gate Q1); a sub-floor request rounds up.
+      crawl_rate_ = v_req_ > cfg_->glide_floor ? v_req_ : cfg_->glide_floor;
+      crawl_expected_ = cfg_->glide_step;   // cadence keyed to the target step
+      crawl_w_scale_ = 1.0f;                 // TODO Stage 3: load persisted scale
+      crawl_adapt_pending_ = false;
+      glide_settle_left_ = 0;
+      glide_gap_ = 0;
+      glide_last_tick_ = t_;
+      glide_count_ = 0;
+      glide_head_ = 0;
+      state_ = State::GLIDE;
+      return;
+    }
+    // row 26: CRAWL (stop-start pulse train)
     if (cfg_->crawl_step > 0.0f) {
       crawl_expected_ = cfg_->crawl_step;   // fire cadence keyed to the target step
       crawl_w_scale_ = 1.0f;
@@ -351,9 +385,6 @@ void Controller::restart_motion(float p_hat) {
       const float w = crawl_pick_width(crawl_rate_);
       crawl_expected_ = pulse_travel(*calib_, w, dir_);   // legacy path, unchanged
     }
-    crawl_settle_left_ = 0;
-    crawl_win_left_ = cfg_->crawl_degraded_win;
-    crawl_win_p0_ = p_hat;
     state_ = State::CRAWL;
     return;
   }
@@ -432,10 +463,9 @@ void Controller::endgame_decide(float p_hat) {
   // extremes (where the static rev table is ~1.8x off) stop limit-cycling. The
   // T7 forward-seat still happens via row 10 once inside tol. Crawl-only flag =>
   // fast-move endgame (A1) is byte-identical; crawl_step==0 disables it (SIL).
-  if (crawl_landing_ && cfg.crawl_step > 0.0f) {
+  if (crawl_landing_ && land_step_ > 0.0f) {
     const int pdir = err > 0.0f ? 1 : -1;
-    const float mag =
-        std::fabs(err) < cfg.crawl_step ? std::fabs(err) : cfg.crawl_step;
+    const float mag = std::fabs(err) < land_step_ ? std::fabs(err) : land_step_;
     // shrink-only scale: the learned scale inflates near the target (reverse
     // under-delivers there) and an inflated landing pulse over-delivers and
     // overshoots -> cap at 1.0 so a landing step never grows, only shrinks.
@@ -492,6 +522,7 @@ float Controller::tick_crawl(float p_hat) {
     p_at_pulse_valid_ = false;
     nomove_pulses_ = 0;
     crawl_landing_ = cfg.crawl_step > 0.0f;  // seat gently (endgame_decide)
+    land_step_ = cfg.crawl_step;
     enter_wait(1);
     return 0.0f;
   }
@@ -564,6 +595,132 @@ float Controller::tick_crawl(float p_hat) {
     }
     w = clipf(w, cfg.pulse_min_ms, cfg.crawl_max_width_ms);
     start_pulse(w, dir_, State::CRAWL, p_hat);
+  }
+  return hold_duty;
+}
+
+// ------------------------------------------------------------------ GLIDE --
+// Continuous keep-rolling kick train (glide-mode-spec.md; gate answers
+// 2026-07-17). Re-kick BEFORE the slider re-sticks so position advances
+// monotonically and never stalls — the belt never unloads (the acoustic win).
+// Between kicks the output is exactly zero (T16 extended -> G-T2). The rate is
+// clamped up to the never-stop floor (restart_motion) so the cadence is tight.
+// Keep-rolling and grab detection ride a SHORT p_hat-progress window, never
+// v_hat (spec §1c, T4: v̂ snaps to 0 below 3 %/s and is blind at low speed).
+float Controller::tick_glide(float p_hat) {
+  const ServoConfig &cfg = *cfg_;
+  const float d = static_cast<float>(dir_);
+  const float hold_duty = SIL_BUG(bug_, G2_GLIDE_HOLD) ? 0.1f * d : 0.0f;
+
+  // short p_hat-progress window (signed toward target), mirrors progress_update
+  const int gwin = cfg.glide_prog_win < GLIDE_WIN_MAX
+                       ? (cfg.glide_prog_win > 2 ? cfg.glide_prog_win : 2)
+                       : GLIDE_WIN_MAX;
+  glide_ring_[glide_head_] = p_hat;
+  glide_head_ = (glide_head_ + 1) % gwin;
+  float gprog = 0.0f;
+  const bool gwin_full = glide_count_ >= gwin;
+  if (!gwin_full) {
+    glide_count_++;
+  } else {
+    const float oldest = glide_ring_[glide_head_];
+    gprog = (p_hat - oldest) * d * FS_HZ / static_cast<float>(gwin);
+  }
+
+  // G4: coast/kick-sized landing handover — hand to the single gentle forward
+  // seat (endgame_decide, shrink-only) so it nails the target without judder
+  // (gate Q3). Stage 2 refines coast_zone with a learned coast term.
+  const float land = cfg.coast_zone > 0.0f
+                         ? cfg.coast_zone
+                         : (cfg.crawl_land_zone > 0.0f ? cfg.crawl_land_zone
+                                                       : cfg.endgame_zone);
+  if ((target_ - p_hat) * d <= land) {
+    p_at_pulse_valid_ = false;
+    nomove_pulses_ = 0;
+    crawl_landing_ = true;         // seat gently via endgame_decide
+    land_step_ = cfg.glide_step;   // the seat uses the glide step
+    enter_wait(1);
+    return 0.0f;
+  }
+
+  // ratchet reference (reused): advances at the executed rate, lead-clamped.
+  // tick_glide is SKIPPED during the multi-tick PULSE, so advance by the elapsed
+  // WALL ticks — a per-call increment starves the pace (pulses dominate GLIDE),
+  // the plant outruns the reference and the drag override false-trips.
+  ratchet_ += d * crawl_rate_ * DT * static_cast<float>(t_ - glide_last_tick_);
+  glide_last_tick_ = t_;
+  const float lead_max =
+      cfg.crawl_lead_frac * crawl_expected_ > cfg.crawl_min_step
+          ? cfg.crawl_lead_frac * crawl_expected_
+          : cfg.crawl_min_step;
+  if ((ratchet_ - p_hat) * d > lead_max) ratchet_ = p_hat + d * lead_max;
+
+  // G5 (drag): a hand pulling the slider AHEAD of the bounded plan is motion
+  // the controller never commanded -> release, never fight (gate Q3 semantics)
+  if ((p_hat - ratchet_) * d > cfg.crawl_override_err &&
+      !SIL_BUG(bug_, T17_NO_DRAG_CHECK)) {
+    declare_grab();
+    return 0.0f;
+  }
+
+  // honest pacing flag (T8 family): persistent under-delivery reported, never a
+  // silent slow-down (reuses the crawl degraded window)
+  if (--crawl_win_left_ <= 0) {
+    const float achieved = std::fabs(p_hat - crawl_win_p0_) /
+                           (static_cast<float>(cfg.crawl_degraded_win) * DT);
+    if (achieved < cfg.crawl_degraded_frac * crawl_rate_)
+      log_.crawl_degraded = true;
+    crawl_win_left_ = cfg.crawl_degraded_win;
+    crawl_win_p0_ = p_hat;
+  }
+
+  // keep-rolling settle: a short forced gap after a kick so its width completes;
+  // between kicks the output is exactly zero (G-T2)
+  glide_gap_++;
+  if (glide_settle_left_ > 0) {
+    glide_settle_left_--;
+    return hold_duty;
+  }
+
+  // runaway guard: a kick over-delivered into a mini-flight -> skip, coast down
+  if (gwin_full && gprog >= cfg.glide_runaway_v) return hold_duty;
+
+  // fire when the RATE demands it (ratchet deficit), OR the slider is about to
+  // re-stick (short-window progress <= v_roll) so it never stops, OR the hard
+  // cadence cap elapsed (safety). not-stopping is the priority (gate Q1).
+  const float deficit = (ratchet_ - p_hat) * d;
+  const bool rate_due = deficit >= cfg.crawl_fire_frac * crawl_expected_;
+  const bool keep_rolling = gwin_full && gprog <= cfg.v_roll;
+  const bool gap_cap = glide_gap_ >= cfg.glide_max_gap_ms;
+  if (rate_due || keep_rolling || gap_cap) {
+    // G5 (blocking): repeated kicks with zero travel = a holding hand
+    if (p_at_pulse_valid_ &&
+        std::fabs(p_hat - p_at_pulse_) < cfg.pulse_move_eps) {
+      nomove_pulses_++;
+      if (nomove_pulses_ >= cfg.crawl_grab_pulses &&
+          !SIL_BUG(bug_, T9_NO_WATCHDOG)) {
+        declare_grab();
+        return 0.0f;
+      }
+    } else if (p_at_pulse_valid_) {
+      nomove_pulses_ = 0;
+    }
+    // self-adjust width (reuse the crawl EMA): aim glide_step, online-correct
+    // the width scale from the last kick's measured travel
+    if (crawl_adapt_pending_) {
+      const float achieved = std::fabs(p_hat - p_at_pulse_);
+      if (achieved > 1e-3f) {
+        const float ratio = clipf(cfg.glide_step / achieved, 0.25f, 4.0f);
+        crawl_w_scale_ =
+            clipf(crawl_w_scale_ * (1.0f + cfg.crawl_w_gain * (ratio - 1.0f)),
+                  cfg.crawl_w_scale_min, cfg.crawl_w_scale_max);
+      }
+      crawl_adapt_pending_ = false;
+    }
+    float w = pulse_width_for(*calib_, cfg.glide_step, dir_) * crawl_w_scale_;
+    w = clipf(w, cfg.pulse_min_ms, cfg.crawl_max_width_ms);
+    start_pulse(w, dir_, State::GLIDE, p_hat);
+    glide_gap_ = 0;
   }
   return hold_duty;
 }

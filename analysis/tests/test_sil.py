@@ -37,6 +37,10 @@ LEGAL = {
     ("CRAWL", "RELEASED"),
     ("RELEASED", "IDLE"), ("RELEASED", "MOVE"), ("RELEASED", "WAIT"),
     ("RELEASED", "CRAWL"),
+    # GLIDE (glide-mode-spec.md rows G1–G8)
+    ("IDLE", "GLIDE"), ("GLIDE", "PULSE"), ("PULSE", "GLIDE"),
+    ("GLIDE", "WAIT"), ("GLIDE", "BRAKE"), ("GLIDE", "RELEASED"),
+    ("WAIT", "GLIDE"), ("RELEASED", "GLIDE"),
 }
 
 
@@ -109,6 +113,12 @@ SC_FREEZE = "p0 30\nduration 5\nrest 0\nat 0.05 target 70\nat 0.15 freeze on\n"
 SC_ABORT = "p0 20\nduration 4\nrest 0\nat 0.05 target 80\nat 0.3 abort on\n"
 SC_RETARGET2 = ("p0 20\nduration 6\nat 0.05 target 80\nat 0.25 target 40\n"
                 "at 0.3 target 60\n")
+# GLIDE (glide-mode-spec.md): continuous keep-rolling kick train. `config glide 1`
+# turns a slow request into State::GLIDE instead of CRAWL.
+SC_GLIDE = "p0 20\nduration 6\nconfig glide 1\nat 0.05 target 60 speed 40\n"
+SC_GLIDE_REV = "p0 80\nduration 6\nconfig glide 1\nat 0.05 target 40 speed 40\n"
+SC_GLIDE_DRAG = ("p0 20\nduration 6\nrest 1.5\nconfig glide 1\n"
+                 "at 0.05 target 80 speed 40\nat 0.6 drag 68 0.3\n")
 
 
 # ------------------------------------------------------------------ checkers
@@ -249,6 +259,31 @@ def chk_t17_drag_released(r: Run, drag_start: int = 1000, drag_end: int = 1500):
     return ok, f"drag override detected at {gd}"
 
 
+def chk_glide_never_stops(r: Run, win_ms: int = 30, floor: float = 8.0):
+    # G-T1: in GLIDE cruise the slider never stalls — the true position advances
+    # in EVERY window (keep-rolling). The negative control (long settle) lets it
+    # re-stick between kicks -> a window sits fully inside a stuck gap -> ~0 %/s.
+    st = r.t["state"]
+    g = np.flatnonzero(st == "GLIDE")
+    if len(g) < win_ms + 5:
+        return False, "no GLIDE cruise (vacuous)"
+    lo, hi = int(g[0]), int(g[-1])
+    pos = r.t["pos"]
+    worst = min(abs(pos[i] - pos[i - win_ms]) / (win_ms / 1000.0)
+                for i in range(lo + win_ms, hi + 1))
+    return worst > floor, f"min {win_ms}ms cruise progress {worst:.1f} %/s"
+
+
+def chk_glide_zero_between(r: Run):
+    # G-T2 (T16 extended): GLIDE emits exactly 0 duty between kicks — keep-rolling
+    # changes the cadence, not the between-kick drive.
+    gl = r.t["state"] == "GLIDE"
+    if not gl.any():
+        return False, "no GLIDE ticks (vacuous)"
+    bad = gl & (r.t["u_cmd"] != 0.0)
+    return not bad.any(), f"{int(bad.sum())} nonzero inter-kick commands in GLIDE"
+
+
 # ------------------------------------------------------------------ tests
 # pattern: one positive + one negative (seeded bug) per tripwire
 
@@ -345,7 +380,8 @@ def test_t14_interlock_supremacy(tmp_path):
 
 def test_t15_no_rogue_transitions(tmp_path):
     for sc, tag in ((SC_RETARGET2, "t15a"), (SC_GRAB, "t15b"),
-                    (SC_CRAWL_GRAB, "t15c"), (SC_ABORT, "t15d")):
+                    (SC_CRAWL_GRAB, "t15c"), (SC_ABORT, "t15d"),
+                    (SC_GLIDE, "t15e"), (SC_GLIDE_DRAG, "t15f")):
         good = run_sim(tmp_path, sc, tag=f"{tag}_ok")
         ok, msg = chk_t15_legal_transitions(good)
         assert ok, f"{tag}: {msg}"
@@ -369,6 +405,49 @@ def test_crawl_blocking_grab(tmp_path):
     assert gd - 1000 <= 1500, f"blocking grab took {gd - 1000} ticks"
     after = r.t["u_cmd"][int(gd) + 2:3000]
     assert (after == 0.0).all(), "torque after CRAWL grab"
+
+
+# ---------------------------------------------------------------- GLIDE (G-Tx)
+
+def test_g1_glide_never_stops(tmp_path):
+    _both(tmp_path, SC_GLIDE, chk_glide_never_stops, 18, "g1")
+
+
+def test_g2_glide_zero_between_kicks(tmp_path):
+    _both(tmp_path, SC_GLIDE, chk_glide_zero_between, 19, "g2")
+
+
+def test_accept_glide_reaches(tmp_path):
+    # never-stop is the priority (gate Q1); still lands honestly fwd AND rev with
+    # no false grab / watchdog. Landing precision is Stage 2 (coast-to-target).
+    for sc, tag in ((SC_GLIDE, "glf"), (SC_GLIDE_REV, "glr")):
+        r = run_sim(tmp_path, sc, tag=tag)
+        assert r.s["settle_flag"] == "reached", f"{tag}: {r.s['settle_flag']}"
+        assert r.s["grab_detect_tick"] == -1, f"{tag}: false grab"
+        assert r.s["watchdog_tripped"] == 0, f"{tag}: watchdog"
+        assert r.s["crawl_degraded"] == 0, f"{tag}: degraded"
+        assert abs(r.s["final_pos"] - r.s["target"]) <= 1.0, \
+            f"{tag}: landed {r.s['final_pos']:.2f} for {r.s['target']}"
+
+
+def test_accept_glide_rate_at_floor(tmp_path):
+    # "reasonable slow": a sub-floor request rounds UP to glide_floor (40 %/s),
+    # and the achieved cruise rate tracks it (never-stop cadence).
+    r = run_sim(tmp_path, "p0 20\nduration 6\nconfig glide 1\n"
+                          "at 0.05 target 60 speed 10\n", tag="grate")
+    gl = np.flatnonzero(r.t["state"] == "GLIDE")
+    dur = (gl[-1] - gl[0]) / 1000.0
+    rate = abs(r.t["pos"][gl[-1]] - r.t["pos"][gl[0]]) / dur
+    assert 25.0 <= rate <= 60.0, f"glide rate {rate:.1f} %/s (floor 40, req 10)"
+
+
+def test_glide_drag_override(tmp_path):
+    # G5: a hand dragging the slider along -> RELEASED (grab), never fight.
+    r = run_sim(tmp_path, SC_GLIDE_DRAG, tag="gldrag")
+    assert r.s["grab_detect_tick"] >= 0, "drag not detected in GLIDE"
+    gd = int(r.s["grab_detect_tick"])
+    after = r.t["u_cmd"][gd + 2:gd + 500]
+    assert (after == 0.0).all(), "torque after GLIDE drag override"
 
 
 # --------------------------------------------------- production-build parity

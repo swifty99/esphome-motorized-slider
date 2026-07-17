@@ -23,6 +23,7 @@ enum class State : uint8_t {
   WAIT = 4,
   CRAWL = 5,
   RELEASED = 6,
+  GLIDE = 7,  // continuous keep-rolling kick train (glide-mode-spec.md)
 };
 
 enum class ReleaseReason : uint8_t {
@@ -46,6 +47,7 @@ struct ControllerLog {
 };
 
 inline constexpr int PROGRESS_WIN_MAX = 256;  // ring capacity >= cfg.progress_win
+inline constexpr int GLIDE_WIN_MAX = 64;      // ring capacity >= cfg.glide_prog_win
 
 class Controller {
  public:
@@ -83,6 +85,7 @@ class Controller {
   float tick_pulse();
   float tick_wait(float p_hat);
   float tick_crawl(float p_hat);
+  float tick_glide(float p_hat);
 
   void settle(float p_hat, SettleFlag flag);
   void enter_wait(int ticks);
@@ -157,6 +160,15 @@ class Controller {
   float crawl_w_scale_{1.0f};        // adaptive width multiplier (self-adjust)
   bool crawl_adapt_pending_{false};  // a CRAWL pulse just completed; adapt scale before next fire
   bool crawl_landing_{false};        // landing from a self-adjusting crawl: seat gently, not via the static-table lunge
+  float land_step_{0.0f};            // landing-seat step magnitude (crawl_step or glide_step)
+
+  // GLIDE (glide-mode-spec.md): continuous keep-rolling kick train
+  int glide_settle_left_{0};         // short forced gap after a kick (keep-rolling)
+  int glide_gap_{0};                 // ticks since the last kick fired
+  int32_t glide_last_tick_{0};       // wall tick of the last tick_glide (ratchet pace)
+  float glide_ring_[GLIDE_WIN_MAX];  // short p_hat-progress window (never v_hat, T4)
+  int glide_count_{0};
+  int glide_head_{0};
 
   // RELEASED
   int still_ticks_{0};

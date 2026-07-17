@@ -28,6 +28,8 @@ enum class SeededBug : int {
   T15_ROGUE_TRANSITION = 15, // undocumented transition BRAKE -> MOVE on retarget
   T16_CRAWL_HOLD = 16,       // inter-pulse hold duty during CRAWL
   T17_NO_DRAG_CHECK = 17,    // CRAWL ratchet-error override check dropped
+  G1_NO_KEEPROLL = 18,       // GLIDE uses a long settle -> re-sticks between kicks
+  G2_GLIDE_HOLD = 19,        // inter-kick hold duty during GLIDE (breaks T16/G-T2)
 };
 
 #ifdef SLIDER_SIL_BUGS

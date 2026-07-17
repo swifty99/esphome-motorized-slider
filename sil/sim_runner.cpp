@@ -50,6 +50,16 @@ struct Scenario {
   float crawl_step = -1.0f;   // self-adjusting crawl step (<0 = keep default 0)
   int crawl_settle_ms = -1;   // crawl-exclusive settle (<0 = keep default)
   float crawl_land_zone = -1.0f;  // crawl landing zone (<0 = keep default 0)
+  // GLIDE config overrides (<0 = keep the §5 default)
+  float glide = -1.0f;
+  float glide_floor = -1.0f;
+  float glide_step = -1.0f;
+  int glide_settle_ms = -1;
+  float v_roll = -1.0f;
+  int glide_prog_win = -1;
+  float glide_runaway_v = -1.0f;
+  int glide_max_gap_ms = -1;
+  float coast_zone = -1.0f;
   std::vector<Event> events;
 };
 
@@ -78,6 +88,15 @@ bool parse_scenario(const char *path, Scenario &sc) {
       else if (name == "crawl_step") ss >> sc.crawl_step;
       else if (name == "crawl_settle_ms") ss >> sc.crawl_settle_ms;
       else if (name == "crawl_land_zone") ss >> sc.crawl_land_zone;
+      else if (name == "glide") ss >> sc.glide;
+      else if (name == "glide_floor") ss >> sc.glide_floor;
+      else if (name == "glide_step") ss >> sc.glide_step;
+      else if (name == "glide_settle_ms") ss >> sc.glide_settle_ms;
+      else if (name == "v_roll") ss >> sc.v_roll;
+      else if (name == "glide_prog_win") ss >> sc.glide_prog_win;
+      else if (name == "glide_runaway_v") ss >> sc.glide_runaway_v;
+      else if (name == "glide_max_gap_ms") ss >> sc.glide_max_gap_ms;
+      else if (name == "coast_zone") ss >> sc.coast_zone;
       else {
         std::fprintf(stderr, "scenario: unknown config '%s'\n", name.c_str());
         return false;
@@ -109,8 +128,8 @@ bool parse_scenario(const char *path, Scenario &sc) {
   return true;
 }
 
-const char *STATE_NAMES[] = {"IDLE", "MOVE", "BRAKE", "PULSE",
-                             "WAIT", "CRAWL", "RELEASED"};
+const char *STATE_NAMES[] = {"IDLE", "MOVE",     "BRAKE", "PULSE",
+                             "WAIT", "CRAWL", "RELEASED", "GLIDE"};
 const char *FLAG_NAMES[] = {"none", "reached", "gave_up", "adopted"};
 const char *REASON_NAMES[] = {"none", "grab", "interlock", "watchdog",
                               "fault", "command"};
@@ -153,6 +172,15 @@ int main(int argc, char **argv) {
   if (sc.crawl_step >= 0.0f) cfg.crawl_step = sc.crawl_step;
   if (sc.crawl_settle_ms >= 0) cfg.crawl_settle_ms = sc.crawl_settle_ms;
   if (sc.crawl_land_zone >= 0.0f) cfg.crawl_land_zone = sc.crawl_land_zone;
+  if (sc.glide >= 0.0f) cfg.glide = sc.glide;
+  if (sc.glide_floor >= 0.0f) cfg.glide_floor = sc.glide_floor;
+  if (sc.glide_step >= 0.0f) cfg.glide_step = sc.glide_step;
+  if (sc.glide_settle_ms >= 0) cfg.glide_settle_ms = sc.glide_settle_ms;
+  if (sc.v_roll >= 0.0f) cfg.v_roll = sc.v_roll;
+  if (sc.glide_prog_win >= 0) cfg.glide_prog_win = sc.glide_prog_win;
+  if (sc.glide_runaway_v >= 0.0f) cfg.glide_runaway_v = sc.glide_runaway_v;
+  if (sc.glide_max_gap_ms >= 0) cfg.glide_max_gap_ms = sc.glide_max_gap_ms;
+  if (sc.coast_zone >= 0.0f) cfg.coast_zone = sc.coast_zone;
   TruthPlant truth = TruthPlant::from(nominal, sc.perturb);
 
   PlantStepper plant;
