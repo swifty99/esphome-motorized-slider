@@ -37,6 +37,8 @@ CONF_V_CRUISE = "v_cruise"
 CONF_V_MIN_CMD = "v_min_cmd"
 CONF_IMPULSE_SETTLE_MS = "impulse_settle_ms"
 CONF_IMPULSE_SETTLE_SHORT_MS = "impulse_settle_short_ms"
+CONF_IMPULSE_AIM = "impulse_aim"
+CONF_IMPULSE_MAX = "impulse_max"
 CONF_THERMAL_AVG_MAX = "thermal_avg_max"
 CONF_U_MAX = "u_max"
 
@@ -76,6 +78,8 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_V_MIN_CMD, default=120.0): cv.float_range(min=20.0, max=300.0),
             cv.Optional(CONF_IMPULSE_SETTLE_MS, default=120): cv.int_range(min=20, max=1000),
             cv.Optional(CONF_IMPULSE_SETTLE_SHORT_MS, default=70): cv.int_range(min=20, max=1000),
+            cv.Optional(CONF_IMPULSE_AIM, default=0.90): cv.float_range(min=0.5, max=1.0),
+            cv.Optional(CONF_IMPULSE_MAX, default=8): cv.int_range(min=3, max=20),
             cv.Optional(CONF_THERMAL_AVG_MAX, default=0.50): cv.float_range(min=0.1, max=1.0),
             cv.Optional(CONF_U_MAX, default=0.90): cv.float_range(min=0.3, max=1.0),
         }
@@ -107,5 +111,7 @@ async def to_code(config):
     cg.add(var.set_v_min_cmd(config[CONF_V_MIN_CMD]))
     cg.add(var.set_impulse_settle_ms(config[CONF_IMPULSE_SETTLE_MS]))
     cg.add(var.set_impulse_settle_short_ms(config[CONF_IMPULSE_SETTLE_SHORT_MS]))
+    cg.add(var.set_impulse_aim(config[CONF_IMPULSE_AIM]))
+    cg.add(var.set_impulse_max(config[CONF_IMPULSE_MAX]))
     cg.add(var.set_thermal_avg_max(config[CONF_THERMAL_AVG_MAX]))
     cg.add(var.set_u_max(config[CONF_U_MAX]))

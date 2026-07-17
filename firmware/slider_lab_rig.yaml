@@ -90,11 +90,14 @@ slider_servo:
   # HTTP dump so it streams ~80 KB/s — 12 s dumps fully in ~9 s, well under the
   # firmware's 30 s dump cap. (45 s would truncate and lose the recent move.)
   recorder_capacity: 12000
-  # §5 tunables (defaults = spec). HIL bring-up nudges settle times UP (§5:
-  # sim value, post-pulse creep is unmodelled — Block 4c):
-  # tol: 0.30
-  # impulse_settle_ms: 120
-  # impulse_settle_short_ms: 70
+  # HIL endgame retune (A1 sweep 2026-07-17, docs/findings/hil-2026-07-17.md):
+  # reverse moves overshot 42 % of the time and 2/40 gave_up — a rev move ends
+  # with forward endgame pulses = a direction reversal, and the reversal backlash
+  # (unmodelled by the nominal M7 table) makes pulses overshoot. Fix on-device
+  # (core untouched, SIL still spec-default):
+  impulse_aim: 0.80       # was 0.90 — more undershoot margin absorbs the backlash surprise
+  impulse_max: 12         # was 8 — bouncy rev moves converge instead of giving up 2.5 % short
+  impulse_settle_ms: 150  # was 120 — post-pulse creep settles before endgame re-decides
 
 # ---------------------------------------------------------------------------
 # slider_servo — HA control surface
