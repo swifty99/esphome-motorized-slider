@@ -30,6 +30,21 @@ controller-spec.md-Entwurf (Phase 4) zur Freigabe, wenn Jan zurück ist.
   OTA-Reboot versuchen, dokumentieren), Tick ignoriert ADC-Fehlercodes,
   labctl-Endzonen-Wortlaut veraltet.
 
+## Querschnittsauftrag (Jan, beim Rausgehen): Positionsabhängigkeit prüfen
+
+> „die Eigenschaften des Sliders sind ev. abhängig von der Position"
+
+Die Nacht bestätigt das für Breakaway (±0.04-Spread, rev-Asymmetrie) und Sustain
+(55–80-%-rev-Band). Noch NICHT positionsaufgelöst: **Impulstabelle** (nur
+mid-travel — aber sie ist das Endgame-Werkzeug!), **Fein-Klippe** (nur 21 % fwd /
+80 % rev), und das neue **M3/I(duty)**. Konsequenz für jeden Block unten: Position
+ist Messachse, nicht Konstante — M3-Staircases an ≥3 Positionen (inkl. 65 % rev),
+Impuls-Grid an ≥3 Positionen in der Dwell-Kampagne mitfahren, und der modeler
+weist für JEDEN Parameter aus, ob er global ist oder positionsabhängig (mit
+Zahlen, nicht Bauchgefühl). K/R selbst sollten positionsUNabhängig sein (Motor
+ist Motor) — wenn die Stall-I(duty)-Kurve doch mit der Position variiert, ist
+das ein Befund über den Antriebsstrang und gehört groß ins Findings-Doc.
+
 ## Blöcke (Reihenfolge; hardware-seriell beim campaign-runner)
 
 1. **Coder-Zyklus 2** (klein, zuerst — die Kampagne profitiert):
