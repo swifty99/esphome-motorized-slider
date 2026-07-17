@@ -438,3 +438,12 @@
 - plant-model §4c Caveat entsprechend abgeschwächt. P5 @ 65 (Band, größtes n)
   als Abschluss-Replikation, danach Kampagnen-Wrap.
 - 2026-07-17 15:29 `160_impulse_ladder.csv`: Positionierung: Park @ 65% fuer P5 (Abschluss-Replikation im Band)
+- 2026-07-17 16:16 `161_dither.csv`: Paar-Probe P5 KALT: 10ms fwd @0.8 nach ~39min Ruhe @ 64% (Abschluss-Replikation im Band)
+- 2026-07-17 16:17 `162_dither.csv`: Paar-Probe P5 WARM-Referenz: 10ms fwd @0.8, ~40s nach Kalt-Puls (Run 161)
+- **P5 @ 64 % Band (Runs 161/162), Kampagnen-Abschluss**: kalt (39 min) +1.63,
+  warm +1.65 → **Ratio 0.99**. Finale Paar-Serie n=5: 0.99/0.91/0.94/0.69/0.99,
+  Median 0.94 → Erster-Puls-Malus typisch 5–10 %, Ausreißer ~30 %, nie ×0.5.
+  Findings-Doc + plant-model final. Loop-Kampagne BEENDET.
+- Rig-Endzustand: idle @ 67.4 %, torque 0, adc errors 0, thermal 0 den ganzen
+  Tag, kein Reboot seit 08:04 (uptime ~8.4 h). Bench frei für Jans Abend-Items
+  (RC-Löten, Ohr-Checks, EXT-Trigger, M1b) und die 8 Gate-Antworten.
