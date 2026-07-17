@@ -183,6 +183,28 @@ Remaining complaint: a **big judder at settling**. Dissected on the rig (settle_
   endgame just seats — cheap, but re-check A1; (b) make the endgame landing
   self-adjusting for crawl arrivals (extend the small-step dosing through the seat) —
   the right fix, more surgery on the A1-critical endgame.
+
+### Option B — BUILT & flashed (2026-07-18)
+
+Jan chose B. `endgame_decide` now, when the move arrived via a self-adjusting crawl
+(`crawl_landing_` flag, crawl-only so A1 fast moves are byte-identical), doses one
+crawl-sized step toward target instead of the static-table reapproach lunge. Key
+subtlety found on the rig: the learned `crawl_w_scale_` **inflates near the target**
+(reverse under-delivers there), and feeding that into the landing over-delivered and
+re-introduced a bounce — so the landing scale is **shrink-only (capped at 1.0)**: a
+landing step never grows, only shrinks (under-dose-safe). Result on the rig:
+
+| | before B | after B (land 0.8) |
+|---|---|---|
+| fwd settle | 3 pulses, +1.9 % lunge, peak 182 %/s | 1 pulse, +0.7 %, peak 85 |
+| rev settle | 10 pulses, ±2.6 % swings, 9 reversals, peak 275 | 5 tiny pulses, ±0.5 %, peak 155, lands 20.01 |
+
+Boot-default landings (persisted S2): fwd err −0.01 %, rev err −0.11 %, 0 overshoots.
+SIL 30/30, default path byte-identical (fwd+rev), A1 untouched. Persisted config:
+`crawl_impulse_duty 0.80, crawl_step 0.4, crawl_settle_ms 25, crawl_land_zone 0.8`
+(all runtime-tunable via the HA numbers). Residual: reverse still makes ~4 *tiny*
+(±0.5 %) corrections — inherent to landing a coarse actuator inside tol 0.3; the big
+belt-flipping judder is gone.
 - **Watchdog vs degraded rate:** arm the crawl watchdog off an achievable rate (or
   scale it) so an honest slow crawl never self-releases. Small core follow-up; B
   sidesteps it by actually sustaining the rate.

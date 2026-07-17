@@ -49,6 +49,7 @@ void Controller::set_target(float target, float p_hat, float v_req) {
   log_.target_clamped = was_clamped;
   settle_flag_ = SettleFlag::NONE;
   endgame_pulses_ = 0;
+  crawl_landing_ = false;
   last_pulse_dir_ = 0;  // no motion under this command yet
 
   // normalize the speed request (spec §5: gap rounds up to a fast move)
@@ -316,6 +317,7 @@ void Controller::settle(float p_hat, SettleFlag flag) {
   settle_flag_ = flag;
   watchdog_left_ = -1;
   has_target_ = false;
+  crawl_landing_ = false;
   if (log_.settled_tick < 0) log_.settled_tick = t_;
 }
 
@@ -327,6 +329,7 @@ void Controller::enter_wait(int ticks) {
 void Controller::restart_motion(float p_hat) {
   p_ref_ = p_hat;
   v_des_prev_ = 0.0f;
+  crawl_landing_ = false;
   kick_ = 0.0f;
   stall_ticks_ = 0;
   sat_ticks_ = 0;
@@ -422,6 +425,27 @@ void Controller::endgame_decide(float p_hat) {
     restart_motion(p_hat);
     return;
   }
+  // crawl-aware gentle landing: a move that arrived via a self-adjusting crawl
+  // doses one crawl-sized step toward target, scaled by the travel-correction
+  // the crawl already learned (crawl_w_scale_) — NOT the static-table reapproach
+  // lunge (rows 14/15). That is what makes reverse landings at the position
+  // extremes (where the static rev table is ~1.8x off) stop limit-cycling. The
+  // T7 forward-seat still happens via row 10 once inside tol. Crawl-only flag =>
+  // fast-move endgame (A1) is byte-identical; crawl_step==0 disables it (SIL).
+  if (crawl_landing_ && cfg.crawl_step > 0.0f) {
+    const int pdir = err > 0.0f ? 1 : -1;
+    const float mag =
+        std::fabs(err) < cfg.crawl_step ? std::fabs(err) : cfg.crawl_step;
+    // shrink-only scale: the learned scale inflates near the target (reverse
+    // under-delivers there) and an inflated landing pulse over-delivers and
+    // overshoots -> cap at 1.0 so a landing step never grows, only shrinks.
+    const float ls = crawl_w_scale_ < 1.0f ? crawl_w_scale_ : 1.0f;
+    float w = pulse_width_for(*calib_, mag, pdir) * ls;
+    w = clipf(w, cfg.pulse_min_ms, cfg.crawl_max_width_ms);
+    if (pdir < 0 && last_pulse_dir_ == 1) log_.overshoots++;  // honest (T8)
+    start_pulse(w, pdir, State::WAIT, p_hat);
+    return;
+  }
   if (err > 0.0f) {  // row 14
     start_pulse(pulse_width_for(*calib_, err * cfg.impulse_aim, +1), +1,
                 State::WAIT, p_hat);
@@ -467,6 +491,7 @@ float Controller::tick_crawl(float p_hat) {
   if ((target_ - p_hat) * d <= land) {
     p_at_pulse_valid_ = false;
     nomove_pulses_ = 0;
+    crawl_landing_ = cfg.crawl_step > 0.0f;  // seat gently (endgame_decide)
     enter_wait(1);
     return 0.0f;
   }

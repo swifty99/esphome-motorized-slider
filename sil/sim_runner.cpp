@@ -49,6 +49,7 @@ struct Scenario {
   float tol = -1.0f;
   float crawl_step = -1.0f;   // self-adjusting crawl step (<0 = keep default 0)
   int crawl_settle_ms = -1;   // crawl-exclusive settle (<0 = keep default)
+  float crawl_land_zone = -1.0f;  // crawl landing zone (<0 = keep default 0)
   std::vector<Event> events;
 };
 
@@ -76,6 +77,7 @@ bool parse_scenario(const char *path, Scenario &sc) {
       else if (name == "tol") ss >> sc.tol;
       else if (name == "crawl_step") ss >> sc.crawl_step;
       else if (name == "crawl_settle_ms") ss >> sc.crawl_settle_ms;
+      else if (name == "crawl_land_zone") ss >> sc.crawl_land_zone;
       else {
         std::fprintf(stderr, "scenario: unknown config '%s'\n", name.c_str());
         return false;
@@ -150,6 +152,7 @@ int main(int argc, char **argv) {
   if (sc.tol > 0.0f) cfg.tol = sc.tol;
   if (sc.crawl_step >= 0.0f) cfg.crawl_step = sc.crawl_step;
   if (sc.crawl_settle_ms >= 0) cfg.crawl_settle_ms = sc.crawl_settle_ms;
+  if (sc.crawl_land_zone >= 0.0f) cfg.crawl_land_zone = sc.crawl_land_zone;
   TruthPlant truth = TruthPlant::from(nominal, sc.perturb);
 
   PlantStepper plant;

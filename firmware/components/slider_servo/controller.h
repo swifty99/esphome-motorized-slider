@@ -156,6 +156,7 @@ class Controller {
   float crawl_win_p0_{0.0f};
   float crawl_w_scale_{1.0f};        // adaptive width multiplier (self-adjust)
   bool crawl_adapt_pending_{false};  // a CRAWL pulse just completed; adapt scale before next fire
+  bool crawl_landing_{false};        // landing from a self-adjusting crawl: seat gently, not via the static-table lunge
 
   // RELEASED
   int still_ticks_{0};

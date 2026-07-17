@@ -104,6 +104,12 @@ slider_servo:
   # reliable both directions; quietness now comes from CADENCE not shove (the
   # runtime Crawl Step / Crawl Settle knobs below). Runtime-overridable for A/B.
   crawl_impulse_duty: 0.80
+  # Jan's ear picked "S2 smooth" (2026-07-18): self-adjusting small steps at a
+  # tight cadence, gentle self-adjusting landing (no settling lunge). All three
+  # runtime-tunable via the HA numbers below; these are the persisted defaults.
+  crawl_step: 0.4         # constant ~0.4 % per-pulse travel, width self-corrects online
+  crawl_settle_ms: 25     # crawl-exclusive tight cadence (endgame settle untouched)
+  crawl_land_zone: 0.8    # crawl carries to 0.8 % of target; endgame seats gently
 
 # ---------------------------------------------------------------------------
 # slider_servo — HA control surface
@@ -168,7 +174,7 @@ number:
     mode: box
     optimistic: true
     restore_value: false
-    initial_value: 0.0
+    initial_value: 0.4
     set_action:
       - lambda: |-
           id(servo).set_crawl_step(x);
@@ -183,7 +189,7 @@ number:
     mode: box
     optimistic: true
     restore_value: false
-    initial_value: 0
+    initial_value: 25
     set_action:
       - lambda: |-
           id(servo).set_crawl_settle_ms((int) x);
@@ -199,7 +205,7 @@ number:
     mode: box
     optimistic: true
     restore_value: false
-    initial_value: 0.0
+    initial_value: 0.8
     set_action:
       - lambda: |-
           id(servo).set_crawl_land_zone(x);
