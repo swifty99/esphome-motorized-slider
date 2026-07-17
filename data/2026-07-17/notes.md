@@ -390,3 +390,21 @@
 - Rig @ 64.3 % geparkt (Run 150, 1-ms-Positionierungspuls) → **P2 @ ~64 % im
   Band**, gleiche Paarung, nach ~45 min Ruhe. Wenn dort Ratio ~0.5–0.7
   zurückkommt, ist das Dwell-Gesetz positions-scoped zu formulieren.
+- 2026-07-17 13:52 `151_dither.csv`: Paar-Probe P2 KALT: 10ms fwd @0.8 nach ~47min Ruhe @ 64% (IM Band — Positions-Hypothese-Test)
+- 2026-07-17 13:53 `152_dither.csv`: Paar-Probe P2 WARM-Referenz: 10ms fwd @0.8, ~40s nach Kalt-Puls (Run 151)
+- **P2 @ 64 % IM BAND (Runs 151/152)**: kalt (47 min) +1.47 %, warm-Referenz
+  +1.62 % → **Paar-Ratio 0.91**. Der Warm-Wert selbst ist niedrig (vs +2.44
+  Ladder C dicht / +2.64 M7-Tabelle an gleicher Position!).
+- **REVISION DES DWELL-GESETZES (Arbeitshypothese nach P1+P2)**: Delivery =
+  f(Position) × g(Aktivitätskontext), NICHT h(Dwell-Stunden):
+  (a) echter Erster-Puls-Malus klein (Ratios 0.99 / 0.91, ≤10 %);
+  (b) Band-Positionen liefern isoliert ~1.5–1.6 vs ~2.0 außerhalb (~×0.75);
+  (c) Pulse in dichten Trains (M7-Messkontext, Ladder C) liefern ~2.4–2.6 =
+  ×1.3–1.5 gegenüber isolierten Pulsen — "recently exercised"-Boost.
+  D1–D3 ×0.5–0.7 = (b)×(c)-Konfundierung, kaum echtes Dwell.
+- Controller-Konsequenz falls bestätigt: M7-FF-Tabelle überpredicted ISOLIERTE
+  Endgame-Pulse um ~25–40 % → systematischer Undershoot → Eskalation fängt's
+  (sichere Richtung, aber mehr Settle-Zeit als SIL zeigt). HIL-Item präzisiert.
+- Nächster Test P3 @ ~67 % (Band, Replikation) mit ERWEITERTEM Protokoll:
+  kalt → 40 s → warm-Ref → sofort 2 Train-Pulse (400 ms Abstand) → misst
+  Kalt/Warm-Ratio UND Train/Warm-Ratio in einer Iteration.
