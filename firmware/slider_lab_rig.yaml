@@ -98,6 +98,11 @@ slider_servo:
   impulse_aim: 0.80       # was 0.90 — more undershoot margin absorbs the backlash surprise
   impulse_max: 12         # was 8 — bouncy rev moves converge instead of giving up 2.5 % short
   impulse_settle_ms: 150  # was 120 — post-pulse creep settles before endgame re-decides
+  # CRAWL acoustics ("the noise thing"): the crawl pulse-train fires full-torque
+  # 0.80 kicks (~5–11/s, each a sharp clack). Softer duty just above worst
+  # breakaway (~0.70) = gentler shove, less impact force; the closed crawl loop
+  # self-paces. Endgame pulses stay at 0.80. NEEDS Jan's ear to confirm quieter.
+  crawl_impulse_duty: 0.72
 
 # ---------------------------------------------------------------------------
 # slider_servo — HA control surface

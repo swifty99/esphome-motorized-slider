@@ -279,9 +279,12 @@ float Controller::tick_brake(float v_hat) {
 }
 
 float Controller::tick_pulse() {
-  if (pulse_left_ > 0) {  // still emitting: exactly `width` ticks at +-0.8
+  if (pulse_left_ > 0) {  // still emitting: exactly `width` ticks at +-duty
     pulse_left_--;
-    return cfg_->impulse_duty * static_cast<float>(pulse_dir_);
+    // CRAWL kicks may use a softer duty (acoustic); endgame stays at impulse_duty
+    const float duty = pulse_origin_ == State::CRAWL ? cfg_->crawl_impulse_duty
+                                                     : cfg_->impulse_duty;
+    return duty * static_cast<float>(pulse_dir_);
   }
   // row 16: width elapsed — back to the origin state, settle timer running
   const int settle_ticks = last_width_ms_ > 12 ? cfg_->impulse_settle_ms

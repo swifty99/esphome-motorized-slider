@@ -117,6 +117,13 @@ struct ServoConfig {
   int adopt_ms = 120;
 
   // CRAWL (Gate answer 1; spec §2 rows 26–29)
+  // crawl_impulse_duty: the duty of CRAWL pulse-train kicks. Defaults to
+  // impulse_duty (0.8) so SIL/spec behaviour is unchanged; the wrapper may lower
+  // it (e.g. 0.72, just above worst breakaway) to soften the acoustic clack —
+  // gentler shove, less impact force. The closed crawl loop self-compensates the
+  // pacing (each pulse then moves less than the 0.8-measured table predicts, so
+  // it fires a touch more often); endgame pulses stay at impulse_duty.
+  float crawl_impulse_duty = 0.8f;
   float v_crawl_max = 45.0f;      // %/s: 20 ms pulse (+6.2 %) per ~140 ms period;
                                   // (v_crawl_max, v_min_cmd) rounds up to v_min_cmd
   float crawl_min_step = 0.30f;   // % smallest commanded step (above p_hat noise)

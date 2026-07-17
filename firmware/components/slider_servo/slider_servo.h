@@ -110,6 +110,8 @@ class SliderServo : public Component {
   void set_impulse_settle_short_ms(int v) { this->cfg_.impulse_settle_short_ms = v; }
   void set_impulse_aim(float v) { this->cfg_.impulse_aim = v; }
   void set_impulse_max(int v) { this->cfg_.impulse_max = v; }
+  void set_crawl_impulse_duty(float v) { this->cfg_.crawl_impulse_duty = v; }
+  void set_crawl_max_width_ms(float v) { this->cfg_.crawl_max_width_ms = v; }
   void set_thermal_avg_max(float v) { this->cfg_.thermal_avg_max = v; }
   void set_u_max(float v) { this->cfg_.u_max = v; }
 
