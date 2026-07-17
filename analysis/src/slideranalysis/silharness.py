@@ -408,11 +408,18 @@ def main(argv=None) -> int:
     ap.add_argument("--out", type=Path, default=Path("../docs/findings"))
     ap.add_argument("--no-plots", action="store_true")
     ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--impulse-a4", action="store_true",
+                    help="run only the A4@50-as-impulse-trains study")
     args = ap.parse_args(argv)
 
     import matplotlib
     matplotlib.use("Agg")
     args.out.mkdir(parents=True, exist_ok=True)
+
+    if args.impulse_a4:
+        impulse_train_study(args.out, seed=args.seed + 10,
+                            plot=not args.no_plots)
+        return 0
 
     rows: list[MetricResult] = []
     r123, a1_results, errs = eval_a1_a2_a3(seed=args.seed)
@@ -462,3 +469,153 @@ def main(argv=None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ------------------------------------------- A4@50 impulse-train study ----
+
+def impulse_train_run(true_plant: PlantParams, p0: float, target: float,
+                      v_des: float, width_ms: int,
+                      rng: np.random.Generator,
+                      nominal: PlantParams | None = None,
+                      max_s: float = 12.0, min_gap_ms: int = 0):
+    """Slow-traverse trajectory mode: calibrated pulse train.
+
+    Deficit-triggered scheduler: a reference ramp advances at v_des; a pulse
+    of fixed ``width_ms`` at +-0.8 duty fires whenever the estimated position
+    lags the ramp by half the pulse's expected travel (measured M7 table).
+    Self-pacing: a plant that travels short fires sooner. Runs on the KF
+    estimate, not sim truth.
+    """
+    nominal = nominal or nominal_plant()
+    cfg = ControllerConfig()
+    ctrl = Controller(nominal, cfg)     # only for the pulse-width table
+    expected = np.interp(width_ms, cfg.fwd_widths, cfg.fwd_travel)
+    kf = DutyDrivenKF(nominal, ObserverConfig.from_plant(nominal, 0.14), p0=p0)
+    plant = PlantStepper(true_plant, p0=p0)
+    sensor = SensorSim(nominal, rng)
+
+    d = 1.0 if target > p0 else -1.0
+    n = int(max_s * 1000)
+    pos = np.empty(n); vel = np.empty(n); duty = np.empty(n)
+    ref = p0
+    u_prev = 0.0
+    pulse_left = 0
+    fired = 0
+    done_ticks = 0
+    last_end = -10**6
+    i_end = n
+    for i in range(n):
+        z = sensor.sample(plant.p, u_prev)
+        p_hat, v_hat = kf.step(u_prev, z)
+        ref += d * v_des * 0.001
+        # clamp the ramp so a stuck plant cannot wind up an unbounded deficit
+        if (ref - p_hat) * d > 3.0 * expected:
+            ref = p_hat + d * 3.0 * expected
+        u = 0.0
+        gap = i - last_end
+        if pulse_left > 0:
+            pulse_left -= 1
+            u = 0.8 * d
+            last_end = i
+        elif ((ref - p_hat) * d >= 0.5 * expected
+              and (target - p_hat) * d > 0.3 and gap >= min_gap_ms):
+            pulse_left = width_ms - 1
+            u = 0.8 * d
+            last_end = i
+            fired += 1
+        plant.step(u)
+        pos[i] = plant.p; vel[i] = plant.v; duty[i] = u
+        u_prev = u
+        # done: at/near target (same tolerance the pulse guard uses), settled
+        if (target - p_hat) * d <= 0.3 and pulse_left == 0 and abs(plant.v) < 3:
+            done_ticks += 1
+            if done_ticks >= 50:
+                i_end = i + 1
+                break
+        else:
+            done_ticks = 0
+    return (np.arange(i_end) / 1000.0, pos[:i_end], vel[:i_end],
+            duty[:i_end], fired)
+
+
+def impulse_train_metrics(t, pos, v_des: float):
+    """A4-style numbers on the TRUE position: window-mean velocity ripple
+    (100 ms, non-overlapping, central 80 % of the traverse) and the visible
+    staircase amplitude (travel between consecutive rest dwells)."""
+    n = len(pos)
+    lo, hi = int(0.1 * n), int(0.9 * n)
+    w = 100
+    v_win = np.array([(pos[i + w] - pos[i]) / (w / 1000.0)
+                      for i in range(lo, hi - w, w)])
+    ripple = float(np.std(v_win) / np.mean(np.abs(v_win)))
+    v_mean = float((pos[hi] - pos[lo]) / ((hi - lo) / 1000.0))
+    # staircase: rest dwells = |v| < 3 %/s over >= 5 ms
+    dpos = np.abs(np.diff(pos)) * 1000.0
+    at_rest = dpos < 3.0
+    steps = []
+    last_rest_pos = None
+    run = 0
+    for i in range(lo, hi):
+        if at_rest[min(i, len(at_rest) - 1)]:
+            run += 1
+            if run == 5:
+                if last_rest_pos is not None:
+                    steps.append(abs(pos[i] - last_rest_pos))
+                last_rest_pos = pos[i]
+        else:
+            run = 0
+    max_step = float(max(steps)) if steps else 0.0
+    return dict(v_mean=v_mean, ripple_100ms=ripple, max_step_pct=max_step,
+                n_steps=len(steps))
+
+
+def impulse_train_study(out: Path, seed: int = 11, plot: bool = True):
+    """A4@50 via impulse trains: 2 plants (nominal, friction +7 %), several
+    pulse widths, 50 %/s target over 20 -> 70 %."""
+    print("\n== A4@50 %/s AS IMPULSE TRAINS (sim; measured M7 pulse table) ==")
+    print(f"  {'width':>6s} {'plant':>9s} {'fired':>6s} {'v_mean':>7s} "
+          f"{'ripple(100ms)':>13s} {'max step':>9s} {'steps':>6s}")
+    results = {}
+    for width, min_gap in ((3, 0), (5, 0), (8, 0), (20, 0),
+                           (5, 17), (8, 20)):
+        for label, fscale in (("nominal", None), ("+7% fric", (0.07, 0.07))):
+            rng = np.random.default_rng(seed)
+            plant = perturbed_plant(rng, friction_scale=fscale) \
+                if fscale else nominal_plant()
+            t, pos, vel, duty, fired = impulse_train_run(
+                plant, 20.0, 70.0, 50.0, width, rng, min_gap_ms=min_gap)
+            m = impulse_train_metrics(t, pos, 50.0)
+            tag = f"{width}ms" + (f"/g{min_gap}" if min_gap else "")
+            print(f"  {tag:>8s} {label:>9s} {fired:6d} {m['v_mean']:6.1f} "
+                  f"{m['ripple_100ms']:13.3f} {m['max_step_pct']:8.2f}% "
+                  f"{m['n_steps']:6d}")
+            results[(width, min_gap, label)] = (t, pos, vel, duty, m)
+
+    if plot:
+        import matplotlib.pyplot as plt
+
+        from .plots import AQUA, BLUE, INK2, ORANGE, _style
+
+        fig, axes = plt.subplots(2, 1, figsize=(9, 6.5), sharex=True,
+                                 height_ratios=[3, 2])
+        cases = {(8, 20): ORANGE, (8, 0): BLUE, (20, 0): AQUA}
+        for (width, gap), color in cases.items():
+            t, pos, vel, duty, m = results[(width, gap, "nominal")]
+            lbl = f"{width} ms" + (f", min gap {gap} ms" if gap else "")
+            axes[0].plot(t, pos, color=color, lw=1.2,
+                         label=f"{lbl}: ripple {m['ripple_100ms']:.2f}, "
+                               f"max step {m['max_step_pct']:.2f} %")
+            axes[1].plot(t, vel, color=color, lw=0.8, alpha=0.8)
+        tt = np.linspace(0, 1.0, 50)
+        axes[0].plot(tt, 20 + 50 * tt, color=INK2, lw=1, ls=":",
+                     label="ideal 50 %/s ramp")
+        axes[0].legend(fontsize=8, frameon=False)
+        _style(axes[0], "50 %/s traverse synthesized from calibrated impulse "
+                        "trains (nominal plant)", None, "position [%]")
+        _style(axes[1], None, "t [s]", "true velocity [%/s]")
+        axes[0].set_xlim(0, 1.15)
+        fig.tight_layout()
+        fig.savefig(out / "controller_a4_impulse_trains.png", dpi=130)
+        plt.close(fig)
+        print(f"  plot -> {out}/controller_a4_impulse_trains.png")
+    return results

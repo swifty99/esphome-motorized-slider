@@ -84,6 +84,52 @@ target); latched silent IDLE.
    must synthesize slow apparent motion from impulse trains (M7 table), or
    the requirement moves to ≥120 %/s.
 
+## A4@50 via impulse trains: feasible as SURGES, not as a glide
+
+Follow-up to gate question 1 (controller-spec §6). Trajectory mode: fixed
+±0.8 pulses from the measured M7 table, fired by a deficit-triggered
+scheduler against a 50 %/s reference ramp (self-pacing, KF in the loop).
+20 → 70 % traverse, nominal plant and friction +7 %. Reproduce:
+`uv run acceptance --impulse-a4`. Plot:
+`controller_a4_impulse_trains.png`. Both smoothness numbers, as demanded:
+
+| Schedule | v_mean | σ/mean (100 ms windows) | max step (rest-to-rest) |
+|---|---|---|---|
+| 3 ms, deficit-paced (bursts) | 50 %/s ✓ | **0.07** ✓ | **6.3–7.3 %** (burst surges) |
+| 5 ms, deficit-paced | 50 %/s ✓ | **0.08** ✓ | 2.2–2.9 % |
+| 8 ms, deficit-paced | 50 %/s ✓ | **0.05–0.07** ✓ | 2.4–3.2 % |
+| 20 ms, deficit-paced | 51 %/s | 0.24–0.32 ✗ | 4.3–4.5 % |
+| 5 ms, isolated (min gap 17 ms) | **16 %/s ✗** | 0.13–0.15 | **0.4 %** |
+| 8 ms, isolated (min gap 20 ms) | **28–29 %/s ✗** | 0.14–0.17 | **1.0 %** |
+
+Verdict, both halves stated:
+
+- **Numerically: FEASIBLE.** Deficit-paced 5–8 ms trains hit 50 %/s with
+  σ/mean 0.05–0.08 — comfortably inside A4's 0.15 — and are robust to the
+  +7 % friction corner (the scheduler self-paces; the sim's warm-stiction
+  regime applies since pulses arrive every 20–120 ms, far inside the D0/D1
+  warm window — delivery ×1.0 up to ~8 min dwell, degradation only at
+  ≥30 min, which concerns the FIRST pulse after a long rest, not trains).
+- **Optically/haptically: it is stop-and-go, not a glide.** The velocity
+  trace is 100–300 %/s spikes separated by rests — the cliff makes that
+  physically unavoidable (no sustained sliding below ~100 %/s exists). At
+  50 %/s the passing schedules move in visible 2–3 % surges at 15–30 Hz;
+  window-σ/mean simply cannot see them at 100 ms scale.
+- **The fine-step variant undershoots in sim, and this is exactly the sim's
+  documented blind spot:** isolated 8 ms pulses yield ~0.8 %/pulse in sim vs
+  the MEASURED 1.75 % (§4c under-prediction: post-pulse creep + m at the
+  range top). On the measured table, isolated 8–10 ms pulses at 28–35 Hz
+  deliver **45–60 %/s at ~1 % steps** — plausibly a passable A4 AND
+  acceptable optics, but only HIL can settle it.
+
+Recommendation into the gate: keep the three options of spec question 1,
+now with numbers — (a) restate A4 at ≥120 %/s (glide exists there natively);
+(b) accept surge-mode 50 %/s (passes A4-as-written, visible 2–3 % surges);
+(c) HIL-test isolated 8–10 ms trains for ~50 %/s at ~1 % steps — the
+measured impulse table says yes, the (conservatively biased) sim says 30 %/s.
+No firmware work is blocked on this: the trajectory layer emits pulses
+either way.
+
 ## Sim-credibility boundaries (explicit)
 
 Credible: breakaway spread, position/direction friction structure, the
