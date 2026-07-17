@@ -332,3 +332,9 @@
   echtes Kalt-Signal**; Stiction-Aufbau beginnt zwischen 10 und 30 min.
   Position 64 % (fwd, außerhalb des rev-Problembands). Weitere Punkte:
   60 min (~10:10), 120 min (~12:10) geplant; Rig ruht dazwischen unangetastet.
+- D2 (Run 142): 10 ms fwd @ 0.8 nach **~60 min Dwell** @ 65.2 % → +1.8 % = ×0.68.
+  Mit D1 (×0.53 @ 32 min) NICHT monoton — Puls-Streuung ±10–15 % dominiert bei
+  Einzelpulsen. Belastbare Aussage: Kalt-Malus ≈ ×0.5–0.7 ab ~30 min; feinere
+  Auflösung bräuchte Repeats mit je eigener Ruhephase (nicht im Tagesbudget).
+  Controller-Konsequenz: Erster-Puls-nach-Ruhe liefert 50–70 % → Eskalationspfad
+  (bereits spezifiziert) fängt das; HIL-Item notiert.
