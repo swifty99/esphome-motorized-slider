@@ -291,7 +291,10 @@ float Controller::tick_pulse() {
                                                : cfg_->impulse_settle_short_ms;
   if (pulse_origin_ == State::CRAWL) {
     state_ = State::CRAWL;
-    crawl_settle_left_ = settle_ticks;
+    // crawl-exclusive settle overrides the endgame short/long split when set
+    crawl_settle_left_ =
+        cfg_->crawl_settle_ms > 0 ? cfg_->crawl_settle_ms : settle_ticks;
+    crawl_adapt_pending_ = true;  // self-adjust learns from this pulse (no-op if crawl_step==0)
   } else {
     enter_wait(settle_ticks);
   }
@@ -337,8 +340,14 @@ void Controller::restart_motion(float p_hat) {
     dir_ = target_ >= p_hat ? 1 : -1;
     ratchet_ = p_hat;
     crawl_rate_ = v_req_;
-    const float w = crawl_pick_width(crawl_rate_);
-    crawl_expected_ = pulse_travel(*calib_, w, dir_);
+    if (cfg_->crawl_step > 0.0f) {
+      crawl_expected_ = cfg_->crawl_step;   // fire cadence keyed to the target step
+      crawl_w_scale_ = 1.0f;
+      crawl_adapt_pending_ = false;
+    } else {
+      const float w = crawl_pick_width(crawl_rate_);
+      crawl_expected_ = pulse_travel(*calib_, w, dir_);   // legacy path, unchanged
+    }
     crawl_settle_left_ = 0;
     crawl_win_left_ = cfg_->crawl_degraded_win;
     crawl_win_p0_ = p_hat;
@@ -433,9 +442,11 @@ float Controller::crawl_pick_width(float rate) const {
   for (int i = 0; i < FWD_PULSE_POINTS; i++) {
     const float w = calib_->fwd_widths[i];
     if (w > cfg_->crawl_max_width_ms) break;
-    const float settle = w <= 12.0f
-                             ? static_cast<float>(cfg_->impulse_settle_short_ms)
-                             : static_cast<float>(cfg_->impulse_settle_ms);
+    const float settle =
+        cfg_->crawl_settle_ms > 0
+            ? static_cast<float>(cfg_->crawl_settle_ms)
+            : (w <= 12.0f ? static_cast<float>(cfg_->impulse_settle_short_ms)
+                          : static_cast<float>(cfg_->impulse_settle_ms));
     const float needed = rate * (settle + w) * 0.001f;
     const float travel = pulse_travel(*calib_, w, dir_);
     const float floor_ = needed > cfg_->crawl_min_step ? needed : cfg_->crawl_min_step;
@@ -502,8 +513,26 @@ float Controller::tick_crawl(float p_hat) {
     } else if (p_at_pulse_valid_) {
       nomove_pulses_ = 0;
     }
-    // row 27: width dosed from the per-unit table for the actual deficit
-    float w = pulse_width_for(*calib_, deficit, dir_);
+    // row 27: width dosed from the per-unit table. Legacy path doses the actual
+    // deficit; self-adjusting path (crawl_step > 0) aims a constant step and
+    // online-corrects the width scale from the last pulse's achieved travel.
+    float w;
+    if (cfg.crawl_step > 0.0f) {
+      if (crawl_adapt_pending_) {           // learn from the pulse that just finished
+        const float achieved = std::fabs(p_hat - p_at_pulse_);
+        if (achieved > 1e-3f) {  // epsilon: ignore noise-floor "no travel" pulses
+          // ratio clamp [0.25, 4.0]: reject a single wild pulse from steering
+          // the scale more than 4x per step before the EMA/bounds catch it
+          const float ratio = clipf(cfg.crawl_step / achieved, 0.25f, 4.0f);
+          crawl_w_scale_ = clipf(crawl_w_scale_ * (1.0f + cfg.crawl_w_gain * (ratio - 1.0f)),
+                                 cfg.crawl_w_scale_min, cfg.crawl_w_scale_max);
+        }
+        crawl_adapt_pending_ = false;
+      }
+      w = pulse_width_for(*calib_, cfg.crawl_step, dir_) * crawl_w_scale_;
+    } else {
+      w = pulse_width_for(*calib_, deficit, dir_);   // legacy, unchanged
+    }
     w = clipf(w, cfg.pulse_min_ms, cfg.crawl_max_width_ms);
     start_pulse(w, dir_, State::CRAWL, p_hat);
   }

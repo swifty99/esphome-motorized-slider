@@ -47,6 +47,8 @@ struct Scenario {
   int recorder = 0;
   int impulse_max = -1;  // config overrides (-1 = keep §5 default)
   float tol = -1.0f;
+  float crawl_step = -1.0f;   // self-adjusting crawl step (<0 = keep default 0)
+  int crawl_settle_ms = -1;   // crawl-exclusive settle (<0 = keep default)
   std::vector<Event> events;
 };
 
@@ -72,6 +74,8 @@ bool parse_scenario(const char *path, Scenario &sc) {
       ss >> name;
       if (name == "impulse_max") ss >> sc.impulse_max;
       else if (name == "tol") ss >> sc.tol;
+      else if (name == "crawl_step") ss >> sc.crawl_step;
+      else if (name == "crawl_settle_ms") ss >> sc.crawl_settle_ms;
       else {
         std::fprintf(stderr, "scenario: unknown config '%s'\n", name.c_str());
         return false;
@@ -144,6 +148,8 @@ int main(int argc, char **argv) {
   ServoConfig cfg;
   if (sc.impulse_max > 0) cfg.impulse_max = sc.impulse_max;
   if (sc.tol > 0.0f) cfg.tol = sc.tol;
+  if (sc.crawl_step >= 0.0f) cfg.crawl_step = sc.crawl_step;
+  if (sc.crawl_settle_ms >= 0) cfg.crawl_settle_ms = sc.crawl_settle_ms;
   TruthPlant truth = TruthPlant::from(nominal, sc.perturb);
 
   PlantStepper plant;

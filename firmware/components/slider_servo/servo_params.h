@@ -135,6 +135,30 @@ struct ServoConfig {
   float crawl_degraded_frac = 0.5f; // achieved < this x requested over the window...
   int crawl_degraded_win = 2000;    // ...ticks -> crawl_degraded flag (honest, T8)
 
+  // self-adjusting CRAWL step (OPTIONAL; default disabled = legacy dosing).
+  // When crawl_step > 0 each crawl pulse aims a constant small travel and the
+  // pulse width self-corrects online from the actually-measured travel of the
+  // previous pulse — regular quiet steps, robust to per-unit / per-direction
+  // impulse-table error. Every default below preserves today's behaviour.
+  float crawl_step = 0.0f;        // %; target per-pulse travel in self-adjusting
+                                  // CRAWL. 0 = disabled (use the legacy
+                                  // deficit-dosed width). Basis: acoustic — a
+                                  // small constant step gives a regular quiet
+                                  // cadence; HIL-tuned.
+  float crawl_w_gain = 0.30f;     // dimensionless EMA gain for the width-scale
+                                  // update per pulse. Basis: slow closed-loop
+                                  // correction of impulse-table error.
+  float crawl_w_scale_min = 0.5f; // bounds on the adaptive width scale. Basis:
+  float crawl_w_scale_max = 2.0f; // keep dosing inside the table's validated
+                                  // ±factor.
+  int crawl_settle_ms = 0;        // 0 = use the endgame short/long settle
+                                  // (byte-identical default). >0 = crawl-
+                                  // EXCLUSIVE inter-pulse settle (ms): the
+                                  // period lever — a shorter settle tightens the
+                                  // clack cadence and shrinks the per-pulse step
+                                  // at a given rate, WITHOUT touching the endgame
+                                  // settle A1 depends on. HIL-tuned.
+
   // watchdog (row 19): 2 x expected move time + 1 s; expected includes endgame
   float watchdog_endgame_s = 1.5f;
 

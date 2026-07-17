@@ -154,6 +154,8 @@ class Controller {
   int crawl_settle_left_{0};
   int crawl_win_left_{0};
   float crawl_win_p0_{0.0f};
+  float crawl_w_scale_{1.0f};        // adaptive width multiplier (self-adjust)
+  bool crawl_adapt_pending_{false};  // a CRAWL pulse just completed; adapt scale before next fire
 
   // RELEASED
   int still_ticks_{0};

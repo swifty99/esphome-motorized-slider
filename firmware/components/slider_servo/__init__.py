@@ -41,6 +41,9 @@ CONF_IMPULSE_AIM = "impulse_aim"
 CONF_IMPULSE_MAX = "impulse_max"
 CONF_CRAWL_IMPULSE_DUTY = "crawl_impulse_duty"
 CONF_CRAWL_MAX_WIDTH_MS = "crawl_max_width_ms"
+CONF_CRAWL_STEP = "crawl_step"
+CONF_CRAWL_W_GAIN = "crawl_w_gain"
+CONF_CRAWL_SETTLE_MS = "crawl_settle_ms"
 CONF_THERMAL_AVG_MAX = "thermal_avg_max"
 CONF_U_MAX = "u_max"
 
@@ -86,6 +89,14 @@ CONFIG_SCHEMA = cv.All(
             # worst breakaway); smaller max width = smaller per-clack lurch.
             cv.Optional(CONF_CRAWL_IMPULSE_DUTY, default=0.80): cv.float_range(min=0.6, max=0.9),
             cv.Optional(CONF_CRAWL_MAX_WIDTH_MS, default=20.0): cv.float_range(min=2.0, max=50.0),
+            # self-adjusting crawl step (default 0.0 = disabled, legacy dosing):
+            # constant small per-pulse travel, width self-corrects from measured
+            # travel of the previous pulse (regular, quiet, table-error robust).
+            cv.Optional(CONF_CRAWL_STEP, default=0.0): cv.float_range(min=0.0, max=3.0),
+            cv.Optional(CONF_CRAWL_W_GAIN, default=0.30): cv.float_range(min=0.0, max=1.0),
+            # crawl-exclusive inter-pulse settle (0 = endgame short/long default);
+            # shorter = tighter cadence / smaller steps at a given rate (smoothness).
+            cv.Optional(CONF_CRAWL_SETTLE_MS, default=0): cv.int_range(min=0, max=1000),
             cv.Optional(CONF_THERMAL_AVG_MAX, default=0.50): cv.float_range(min=0.1, max=1.0),
             cv.Optional(CONF_U_MAX, default=0.90): cv.float_range(min=0.3, max=1.0),
         }
@@ -121,5 +132,8 @@ async def to_code(config):
     cg.add(var.set_impulse_max(config[CONF_IMPULSE_MAX]))
     cg.add(var.set_crawl_impulse_duty(config[CONF_CRAWL_IMPULSE_DUTY]))
     cg.add(var.set_crawl_max_width_ms(config[CONF_CRAWL_MAX_WIDTH_MS]))
+    cg.add(var.set_crawl_step(config[CONF_CRAWL_STEP]))
+    cg.add(var.set_crawl_w_gain(config[CONF_CRAWL_W_GAIN]))
+    cg.add(var.set_crawl_settle_ms(config[CONF_CRAWL_SETTLE_MS]))
     cg.add(var.set_thermal_avg_max(config[CONF_THERMAL_AVG_MAX]))
     cg.add(var.set_u_max(config[CONF_U_MAX]))
