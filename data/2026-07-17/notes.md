@@ -217,3 +217,34 @@
   despite these factors — errors divide by ~3-5 per round as forecast.
 - Rig end state: player idle, position 55.1 %, mid-travel, torque 0, no reboot (uptime
   continuous ~8.9 ks). Left quiet.
+- 2026-07-17 07:17 `79_dither.csv`: preflight actuation blip
+- 2026-07-17 07:17 `81_dither.csv`: preflight scope blip
+- 2026-07-17 07:35 `84_dither.csv`: preflight actuation blip
+- 2026-07-17 07:35 `86_dither.csv`: preflight scope blip
+
+## Morgen-Session (Jan an der Bench, ~07:00–07:50)
+
+- Scope-Replug durch Jan; Rig hatte per DHCP neue IP gezogen (auf .187 antwortete
+  ein fremdes Zoo-Gerät!) → Firmware jetzt mit fester IP 192.168.178.115, seriell
+  geflasht.
+- **ADC-Zwischenfall**: adc_raw las flach 0 counts (Run 82) bei nachweislich
+  anliegendem Analogsignal; Jans Reset half nicht, nach OTA-Reboot wieder normal
+  (Run 83: mean 4040, std 9.2). Ursache UNGEKLÄRT — Wiedervorlage; Tick ignoriert
+  adc_oneshot_read-Fehlercodes (slider_lab.cpp Tick-Pfad), Kandidat für Coder-Zyklus.
+- Preflight --scope: **all green** (Run 84/85) — Co-Swing Ch A endlich verifiziert:
+  Scope 481 mV vs Firmware 400 mV, Ratio 1.20. Der 1/50-Verdacht der Vorsession
+  ist damit vom Tisch.
+- **Phase-1-Alignment-Gate GESCHLOSSEN**: pwm_coupling duty 0.35/10 s mit
+  --scope alignment (Runs 87 npz + 88 CSV). Strom-AN/AUS-Kanten (Ripple-Leistung,
+  sample-genau) vs CSV-duty-Kanten: Dauer 9.99932 s vs 10.00000 s →
+  **−0.68 ms über 10 s = 68 ppm**, Segmentgrenzen ≪ 1 Tick. Trigger: Ch B rising
+  25 mV (Preset).
+- **EXT-Trigger-Pfad TOT**: Capture auf EXT 1.0 V rising gearmt, noise_floor
+  gefeuert (Sync-Puls 2 s HIGH lag an) → Timeout (89_-Versuch, kein npz).
+  Ch-B-Trigger bleibt der Arbeitsweg; Treiber-vs-Verkabelung klärt die Bench.
+- **Endzonen-Cut → passiver Marker** (Jans Entscheid): Torque wird außerhalb
+  [3,97] nicht mehr genullt, FLAG_ENDZONE/EV_ENDZONE bleiben als Datenmarker;
+  endstop_safe = No-op. Geflasht + bewiesen: Blip 63.2→98.5 %, dann goto
+  98.5→50.7 % OHNE endstop_safe (der frühere Trap-Fall). Begrenzung gegen
+  Dauergrinding: Budget- + Thermal-Interlock. labctl-WARN-Wortlaut („interlock
+  cut torque") ist jetzt irreführend — Mini-Cleanup offen.

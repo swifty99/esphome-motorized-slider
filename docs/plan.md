@@ -178,7 +178,7 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 | Phase | Status | Notes |
 |---|---|---|
 | 0 Scaffold | ✅ done | commit 2612d29 |
-| 1 Lab rig | ✅ bis auf Scope-Alignment | v4 (goto 0.72+Param, Dump-Latch-Fix, Clamp 0.5) geflasht+verifiziert; Alignment-Gate wartet NUR auf Scope-Replug (PicoScope fiel 2026-07-16 ~20:35 vom USB-Bus) — ein Rerun von Run 31 mit --scope alignment schließt es |
+| 1 Lab rig | ✅ KOMPLETT (2026-07-17 morgens) | Alignment-Gate geschlossen: −0.68 ms über 10 s (68 ppm), Ch-B-Trigger (EXT-Pfad tot, Bench-Diagnose offen); Co-Swing Ch A verifiziert (Ratio 1.20); feste IP .115; Endzonen-Cut → passiver Marker (Jans Entscheid, R4 aktualisiert) |
 | 2 Measurements | ✅ CSV-Teil (Nacht 07-16→17) | M1/M4/M5/M6/M7/M8-objektiv + Fein-Ladders + M2-CSV komplett, 127 Runs; OFFEN (brauchen Scope): M3 I(duty)→K/R, M2-Spikes, M1b INL, Ch-A-Co-Swing; Entscheidungen: decay FAST empfohlen, Dither kein Wundermittel (Δbase≈Amplitude), Backlash nicht auflösbar; Summary: docs/findings/night-2026-07-17.md |
 | 3 Offline design | ✅ Sim+Observer / 🔶 Controller | Plant-Sim validiert (1–3% RMSE |duty|≥0.75), EKF-Observer 3–5× besser als Legacy bei ~0 Lag, plant-model.md + auto-ident-spec.md (Draft) committed; Open-Loop-Impuls-Demo 4/4 ±1% (Runs 07-17/67–78) = „90% FF" bewiesen; OFFEN: Controller-Prototyp im Sim (Kaskade FF+PID, Endgame, Override) |
 | 4 Controller spec | ⬜ | approval gate |
