@@ -338,3 +338,9 @@
   Auflösung bräuchte Repeats mit je eigener Ruhephase (nicht im Tagesbudget).
   Controller-Konsequenz: Erster-Puls-nach-Ruhe liefert 50–70 % → Eskalationspfad
   (bereits spezifiziert) fängt das; HIL-Item notiert.
+- 2026-07-17 12:05 `143_dither.csv`: Dwell D3: 10ms fwd @0.8 nach ~117min Ruhe (letzte Bewegung 10:10, Run 142)
+- D3 (Run 143): 10 ms fwd @ 0.8 nach **~117 min Dwell** @ 66.9 % → +1.30 % =
+  **×0.49**. Mit D1 ×0.53 / D2 ×0.68: Kalt-Malus **plateaut** bei ×0.5–0.7 ab
+  ~30 min — keine weitere Degradation bis 2 h. Dwell-Kampagne damit KOMPLETT
+  (D0–D3); Feinstruktur bleibt Puls-Streuung, Gesetz fürs Spec bestätigt.
+  Rig-Zustand: idle @ 68.2 %, adc errors 0, kein Reboot (uptime 4.05 h).
