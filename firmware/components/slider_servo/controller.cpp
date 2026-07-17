@@ -460,7 +460,11 @@ float Controller::tick_crawl(float p_hat) {
   const float d = static_cast<float>(dir_);
   const float hold_duty = SIL_BUG(bug_, T16_CRAWL_HOLD) ? 0.1f * d : 0.0f;
 
-  if ((target_ - p_hat) * d <= cfg.endgame_zone) {  // row 28: endgame handover
+  // row 28: endgame handover. crawl_land_zone (when set) carries the gentle
+  // crawl closer to target than endgame_zone so the endgame only does a tiny
+  // seat instead of a full-duty lunge (the settling judder).
+  const float land = cfg.crawl_land_zone > 0.0f ? cfg.crawl_land_zone : cfg.endgame_zone;
+  if ((target_ - p_hat) * d <= land) {
     p_at_pulse_valid_ = false;
     nomove_pulses_ = 0;
     enter_wait(1);

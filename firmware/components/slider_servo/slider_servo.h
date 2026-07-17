@@ -115,6 +115,7 @@ class SliderServo : public Component {
   void set_crawl_step(float v) { this->cfg_.crawl_step = v; }
   void set_crawl_w_gain(float v) { this->cfg_.crawl_w_gain = v; }
   void set_crawl_settle_ms(int v) { this->cfg_.crawl_settle_ms = v; }
+  void set_crawl_land_zone(float v) { this->cfg_.crawl_land_zone = v; }
   void set_thermal_avg_max(float v) { this->cfg_.thermal_avg_max = v; }
   void set_u_max(float v) { this->cfg_.u_max = v; }
 

@@ -98,11 +98,12 @@ slider_servo:
   impulse_aim: 0.80       # was 0.90 — more undershoot margin absorbs the backlash surprise
   impulse_max: 12         # was 8 — bouncy rev moves converge instead of giving up 2.5 % short
   impulse_settle_ms: 150  # was 120 — post-pulse creep settles before endgame re-decides
-  # CRAWL acoustics ("the noise thing"): the crawl pulse-train fires full-torque
-  # 0.80 kicks (~5–11/s, each a sharp clack). Softer duty just above worst
-  # breakaway (~0.70) = gentler shove, less impact force; the closed crawl loop
-  # self-paces. Endgame pulses stay at 0.80. NEEDS Jan's ear to confirm quieter.
-  crawl_impulse_duty: 0.72
+  # CRAWL duty = the kick strength. 0.72 (softer, quieter shove) was found to sit
+  # BELOW reverse breakaway near the ends -> reverse crawl false-released (research
+  # 2026-07-18, docs/findings/crawl-smoothness-2026-07-18.md). Back to 0.80 =
+  # reliable both directions; quietness now comes from CADENCE not shove (the
+  # runtime Crawl Step / Crawl Settle knobs below). Runtime-overridable for A/B.
+  crawl_impulse_duty: 0.80
 
 # ---------------------------------------------------------------------------
 # slider_servo — HA control surface
@@ -141,6 +142,67 @@ number:
     set_action:
       - lambda: |-
           id(servo).command_speed(x);
+  # --- CRAWL shaping knobs (runtime A/B, 2026-07-18): vary the pulse-train live
+  # without reflashing. docs/findings/crawl-smoothness-2026-07-18.md.
+  - platform: template
+    name: "Servo Crawl Duty"
+    id: servo_crawl_duty
+    min_value: 0.60
+    max_value: 0.90
+    step: 0.01
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 0.80
+    set_action:
+      - lambda: |-
+          id(servo).set_crawl_impulse_duty(x);
+  # target %-travel per crawl pulse; 0 = legacy deficit dosing (self-adjusting when >0)
+  - platform: template
+    name: "Servo Crawl Step"
+    id: servo_crawl_step
+    min_value: 0.0
+    max_value: 3.0
+    step: 0.05
+    unit_of_measurement: "%"
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 0.0
+    set_action:
+      - lambda: |-
+          id(servo).set_crawl_step(x);
+  # crawl-exclusive inter-pulse settle (ms); 0 = endgame default (the cadence lever)
+  - platform: template
+    name: "Servo Crawl Settle"
+    id: servo_crawl_settle
+    min_value: 0
+    max_value: 200
+    step: 5
+    unit_of_measurement: "ms"
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 0
+    set_action:
+      - lambda: |-
+          id(servo).set_crawl_settle_ms((int) x);
+  # crawl carries to within this %-of-target before the endgame seats; 0 =
+  # endgame_zone (3.5%). Small (~0.8) = no settling lunge/judder.
+  - platform: template
+    name: "Servo Crawl Land"
+    id: servo_crawl_land
+    min_value: 0.0
+    max_value: 3.5
+    step: 0.1
+    unit_of_measurement: "%"
+    mode: box
+    optimistic: true
+    restore_value: false
+    initial_value: 0.0
+    set_action:
+      - lambda: |-
+          id(servo).set_crawl_land_zone(x);
 
 # ---------------------------------------------------------------------------
 # R9 — lab HA surface (dormant while slider_lab is disabled)

@@ -158,6 +158,14 @@ struct ServoConfig {
                                   // clack cadence and shrinks the per-pulse step
                                   // at a given rate, WITHOUT touching the endgame
                                   // settle A1 depends on. HIL-tuned.
+  float crawl_land_zone = 0.0f;   // 0 = hand off to the endgame at endgame_zone
+                                  // (byte-identical default). >0 = crawl carries
+                                  // its gentle steps to within this %-of-target
+                                  // before the endgame takes over — kills the
+                                  // settling judder (the endgame otherwise closes
+                                  // the whole endgame_zone with big full-duty
+                                  // lunges after the small crawl steps). Crawl-
+                                  // only; the fast-move endgame is untouched (A1).
 
   // watchdog (row 19): 2 x expected move time + 1 s; expected includes endgame
   float watchdog_endgame_s = 1.5f;

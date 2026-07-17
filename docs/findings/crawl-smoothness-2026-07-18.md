@@ -161,6 +161,28 @@ scorecard cannot regress. Confirm with one `a1_sweep.py 40 1` after B anyway.
   re-approach = a belt load-reversal *thunk* (A1 rev overshoot 11 %). Trade a touch
   more `impulse_aim` undershoot for fewer reversals — normal A1 loop, rev-overshoot
   the gate. This is the *other* "belt tension/untension" Jan named.
+
+## 8. Settling judder (Jan's ear, 2026-07-18) — the crawl→endgame handover
+
+Jan picked **S2 (step 0.4 / settle 25)** as best; "fine" (S3) is "a farting noise".
+Remaining complaint: a **big judder at settling**. Dissected on the rig (settle_ab):
+
+- **Forward:** crawl hands off `endgame_zone` (3.5 %) short and the endgame closes it
+  with full-0.80 lunges (3 pulses, +1.9 % first, peak 182 %/s). **Fixed** by
+  `crawl_land_zone` (new knob): carry the gentle crawl to within ~0.8 % of target →
+  the endgame does ONE +0.8 % seat, peak 102 %/s. SIL-neutral (default 0 = old
+  behaviour, byte-identical fwd+rev, 30/30), crawl-only so A1 (fast moves) untouched.
+- **Reverse:** a *limit cycle*, not a single lunge — 5–9 reversals of ±2.6 % before
+  it latches (peak 233–275 %/s). `crawl_land_zone` shrinks the first lunge but adds
+  cycles. Root cause: the **static reverse impulse table under-doses at 20/80 %**
+  (calibrated mid-travel, rev ×1.8 off there, §4c), so every endgame correction
+  overshoots `tol` and the reapproach flips it. The self-adjusting crawl fixes this
+  *during* the crawl; the endgame reverts to the static table to land.
+  Fix options (Jan's call): (a) loosen landing `tol` to > `crawl_step` (~0.5–0.6 %,
+  well inside the 2 % UX bar) so the last gentle crawl step lands within tol and the
+  endgame just seats — cheap, but re-check A1; (b) make the endgame landing
+  self-adjusting for crawl arrivals (extend the small-step dosing through the seat) —
+  the right fix, more surgery on the A1-critical endgame.
 - **Watchdog vs degraded rate:** arm the crawl watchdog off an achievable rate (or
   scale it) so an honest slow crawl never self-releases. Small core follow-up; B
   sidesteps it by actually sustaining the rate.
