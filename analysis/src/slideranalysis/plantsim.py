@@ -130,26 +130,40 @@ class SimResult:
     duty_applied: np.ndarray
 
 
-def simulate(params: PlantParams, duty, p0: float, v0: float = 0.0,
-             dt: float = 0.001, endzone: bool = True,
-             endstop_safe: bool = False) -> SimResult:
-    """Integrate the plant over a duty trace (one value per tick)."""
-    duty = np.asarray(duty, dtype=float)
-    n = len(duty)
-    pos = np.empty(n)
-    vel = np.empty(n)
-    stk = np.empty(n, dtype=bool)
-    ua = np.empty(n)
+class PlantStepper:
+    """Per-tick stepping interface to the plant (for closed-loop use).
 
-    p = float(p0)
-    v = float(v0)
-    stuck = abs(v) < params.v_stick
-    lo, hi = params.endzone
-    m, b = params.m, params.b
+    Exactly the physics of :func:`simulate` (which delegates here). The
+    closed-loop harness may additionally force the state (grab simulation)
+    via :meth:`force` -- the hand is modeled as infinitely stiff, which is a
+    stated limitation (real grab dynamics are NOT represented).
+    """
 
-    for i in range(n):
-        u = duty[i]
-        if endzone and not endstop_safe and (p < lo or p > hi):
+    def __init__(self, params: PlantParams, p0: float, v0: float = 0.0,
+                 dt: float = 0.001, endzone: bool = True,
+                 endstop_safe: bool = False):
+        self.params = params
+        self.dt = dt
+        self.endzone = endzone
+        self.endstop_safe = endstop_safe
+        self.p = float(p0)
+        self.v = float(v0)
+        self.stuck = abs(self.v) < params.v_stick
+
+    def force(self, p: float, v: float = 0.0, stuck: bool = True) -> None:
+        """Override the state (grab/disturbance injection)."""
+        self.p, self.v, self.stuck = float(p), float(v), stuck
+
+    def step(self, u_cmd: float) -> tuple[float, float, bool, float]:
+        """One 1 kHz tick with commanded duty. Returns (p, v, stuck, u_applied)."""
+        params = self.params
+        dt = self.dt
+        m, b = params.m, params.b
+        lo, hi = params.endzone
+        p, v, stuck = self.p, self.v, self.stuck
+
+        u = u_cmd
+        if self.endzone and not self.endstop_safe and (p < lo or p > hi):
             u = 0.0
         if stuck:
             sdir = np.sign(u)
@@ -187,10 +201,26 @@ def simulate(params: PlantParams, duty, p0: float, v0: float = 0.0,
             p, v, stuck = 0.0, 0.0, True
         elif p >= 100.0:
             p, v, stuck = 100.0, 0.0, True
-        pos[i] = p
-        vel[i] = v
-        stk[i] = stuck
-        ua[i] = u
+
+        self.p, self.v, self.stuck = p, v, stuck
+        return p, v, stuck, u
+
+
+def simulate(params: PlantParams, duty, p0: float, v0: float = 0.0,
+             dt: float = 0.001, endzone: bool = True,
+             endstop_safe: bool = False) -> SimResult:
+    """Integrate the plant over a duty trace (one value per tick)."""
+    duty = np.asarray(duty, dtype=float)
+    n = len(duty)
+    pos = np.empty(n)
+    vel = np.empty(n)
+    stk = np.empty(n, dtype=bool)
+    ua = np.empty(n)
+
+    stepper = PlantStepper(params, p0=p0, v0=v0, dt=dt, endzone=endzone,
+                           endstop_safe=endstop_safe)
+    for i in range(n):
+        pos[i], vel[i], stk[i], ua[i] = stepper.step(duty[i])
 
     return SimResult(t=np.arange(n) * dt, pos=pos, vel=vel, stuck=stk, duty_applied=ua)
 

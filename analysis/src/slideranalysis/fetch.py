@@ -29,16 +29,23 @@ def sanitize(name: str) -> str:
 
 
 def next_seq(folder: Path) -> str:
-    """Next free 2-digit sequence number in the folder (01..99)."""
+    """Next free sequence number in the folder (01..99, then 100..999).
+
+    2 digits keep the historical naming; busy days (2026-07-17 hit 99 mid-
+    campaign) spill into 3-digit numbers, which still sort lexically after
+    the 2-digit block within a day folder.
+    """
     taken = set()
     for p in folder.glob("[0-9][0-9]_*"):
-        taken.add(int(p.name[:2]))
+        taken.add(int(p.name.split("_", 1)[0]))
+    for p in folder.glob("[0-9][0-9][0-9]_*"):
+        taken.add(int(p.name.split("_", 1)[0]))
     n = 1
     while n in taken:
         n += 1
-    if n > 99:
-        raise RuntimeError(f"no free 2-digit sequence number left in {folder}")
-    return f"{n:02d}"
+    if n > 999:
+        raise RuntimeError(f"no free sequence number left in {folder}")
+    return f"{n:02d}" if n <= 99 else f"{n:03d}"
 
 
 def fetch(host: str, data_dir: Path = DEFAULT_DATA_DIR, note: str | None = None,

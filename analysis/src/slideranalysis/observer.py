@@ -42,7 +42,8 @@ class ObserverConfig:
     r_quiet_pct: float       # measurement sigma, duty == 0 [%]
     r_pwm_pct: float         # measurement sigma under PWM [%]
     v_stick: float = 3.0
-    gate_sigma: float = 5.0  # innovation gate (spike rejection), in sigmas
+    gate_sigma: float = 5.0        # innovation gate (spike rejection), in sigmas
+    gate_max_consecutive: int = 8  # more rejections in a row = real offset, accept
 
     @classmethod
     def from_plant(cls, plant: PlantParams, model_err_duty: float = 0.05,
@@ -75,6 +76,7 @@ class DutyDrivenKF:
         self.x = np.array([p0, v0], dtype=float)
         self.P = np.diag([1.0, 100.0])
         self._stuck = True
+        self._gate_rejects = 0
         dt = 1.0 / FS_HZ
         self._Q = cfg.sigma_a**2 * np.array(
             [[dt**4 / 4, dt**3 / 2], [dt**3 / 2, dt**2]]
@@ -118,7 +120,13 @@ class DutyDrivenKF:
             # single implausible sample is rejected, not fused. While moving
             # the gate stays open -- there large innovations are usually
             # honest model error (P does not carry the friction-map error).
-            return
+            # A gate may only reject ISOLATED outliers: consecutive rejections
+            # mean the offset is real (e.g. the slider was moved by hand while
+            # the estimate was model-frozen) -- accept and converge.
+            self._gate_rejects += 1
+            if self._gate_rejects <= self.cfg.gate_max_consecutive:
+                return
+        self._gate_rejects = 0
         K = (self.P @ H.T / S).ravel()
         self.x = self.x + K * innov
         IKH = np.eye(2) - np.outer(K, H.ravel())
