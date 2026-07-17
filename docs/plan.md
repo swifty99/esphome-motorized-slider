@@ -180,7 +180,7 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 | 0 Scaffold | ✅ done | commit 2612d29 |
 | 1 Lab rig | ✅ KOMPLETT (2026-07-17 morgens) | Alignment-Gate geschlossen: −0.68 ms über 10 s (68 ppm), Ch-B-Trigger (EXT-Pfad tot, Bench-Diagnose offen); Co-Swing Ch A verifiziert (Ratio 1.20); feste IP .115; Endzonen-Cut → passiver Marker (Jans Entscheid, R4 aktualisiert) |
 | 2 Measurements | ✅ CSV-Teil (Nacht 07-16→17) | M1/M4/M5/M6/M7/M8-objektiv + Fein-Ladders + M2-CSV komplett, 127 Runs; OFFEN (brauchen Scope): M3 I(duty)→K/R, M2-Spikes, M1b INL, Ch-A-Co-Swing; Entscheidungen: decay FAST empfohlen, Dither kein Wundermittel (Δbase≈Amplitude), Backlash nicht auflösbar; Summary: docs/findings/night-2026-07-17.md |
-| 3 Offline design | ✅ Sim+Observer / 🔶 Controller | Plant-Sim validiert (1–3% RMSE |duty|≥0.75), EKF-Observer 3–5× besser als Legacy bei ~0 Lag, plant-model.md + auto-ident-spec.md (Draft) committed; Open-Loop-Impuls-Demo 4/4 ±1% (Runs 07-17/67–78) = „90% FF" bewiesen; OFFEN: Controller-Prototyp im Sim (Kaskade FF+PID, Endgame, Override) |
+| 3 Offline design | ✅ KOMPLETT (2026-07-17) | Sim validiert, EKF-Observer 3–5× über Legacy, Demo 4/4 ±1%; Controller-Prototyp im SIL: A1/A2/A3/A4@150/A5/A7 + Band-Stress alle PASS unter gestörten Plants mit EKF im Loop (d55debd/6b388a1); NOT-CREDIBLE dokumentiert: A4@50%/s (unterm Cliff), A6, A8 (~0.4s Grab-Floor mit Pot-only → Phase-7-Argument); 5 Failure-Modes als Phase-4-Input |
 | 4 Controller spec | ⬜ | approval gate |
 | 5 Implementation + SIL | ⬜ | |
 | 6 HIL verification | ⬜ | flash gate |
