@@ -107,6 +107,10 @@ class SliderLab : public Component {
   std::string get_player_state() const;
   bool is_recorder_full() const { return this->recorder_full_.load(); }
   uint16_t get_last_tick_us() const { return this->last_tick_us_.load(); }
+  // cumulative failed adc_oneshot_read calls since boot (2026-07-17: the ADC
+  // silently read flat 0 for minutes; only an OTA reboot cleared it — this
+  // makes the failure mode visible instead of silent zeros). Expect 0.
+  uint32_t get_adc_error_count() const { return this->adc_err_count_.load(); }
   // readback of the actually driven scope-sync level (pin is INPUT_OUTPUT)
   bool get_sync_level() const { return gpio_get_level((gpio_num_t) this->sync_pin_) != 0; }
 
@@ -202,6 +206,7 @@ class SliderLab : public Component {
   // HA-visible
   std::atomic<float> pos_percent_{0.0f};
   std::atomic<uint16_t> last_tick_us_{0};
+  std::atomic<uint32_t> adc_err_count_{0};  // tick-incremented, read by sensor
   // written by run_experiment() only while idle; read by text sensor (main task)
   // and by the dump handler (only while idle)
   std::string run_name_{"none"};

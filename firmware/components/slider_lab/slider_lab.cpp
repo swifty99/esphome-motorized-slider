@@ -327,7 +327,14 @@ void SliderLab::tick_() {
   int32_t sum = 0;
   for (int i = 0; i < kAdcSamples; i++) {
     int raw = 0;
-    adc_oneshot_read(this->adc_, (adc_channel_t) this->adc_channel_, &raw);
+    if (adc_oneshot_read(this->adc_, (adc_channel_t) this->adc_channel_, &raw) != ESP_OK) {
+      // Count silently (R1: no logging/alloc in the tick); surfaced via the
+      // "Lab ADC Errors" sensor + labctl status. 2026-07-17 morning: the ADC
+      // read flat 0 for minutes with no error visible anywhere — only an OTA
+      // reboot cleared it. raw stays 0, exactly the observed symptom, but the
+      // counter now names it.
+      this->adc_err_count_.fetch_add(1, std::memory_order_relaxed);
+    }
     s[i] = (uint16_t) raw;
     sum += raw;
   }
@@ -776,7 +783,10 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
     const int repeats = p["repeats"] | 1;
     const float step = p["step"] | 0.005f;
     const uint32_t interval = p["interval_ms"] | 20;
-    const float thresh = p["move_threshold"] | 0.3f;
+    // Bench-proven detector recipe (Block 2, commit 0c9c60a): thresholds 0.3
+    // and 1.5 false-trigger on raw wiper noise (1.2/3 % p-p idle/drive) — the
+    // working recipe is 5.0 (with step 0.006, hold_ms 50 passed per run).
+    const float thresh = p["move_threshold"] | 5.0f;
     const uint32_t hold_ms = p["hold_ms"] | 300;  // post-breakaway sustain check (Stribeck)
     for (float pos : positions) {
       for (int r = 0; r < repeats; r++) {
@@ -807,13 +817,17 @@ bool SliderLab::build_program_(const std::string &name, JsonObject p, Program &o
     // reverse just above breakaway; pot dead time = gap traversal.
     const float duty = p["duty"] | 0.45f;
     const float approach = p["approach_duty"] | 0.5f;
+    // Block-3 evidence (run 21, 2026-07-17): 600 ms cannot creep at real
+    // breakaway levels (0.68 flew 26 -> 97 %); the campaign worked around it
+    // with a sub-breakaway dummy. Parameterized so the approach can be sized.
+    const uint32_t approach_ms = p["approach_ms"] | 600;
     const float pos = p["position"] | 50.0f;
     const int cycles = p["cycles"] | 3;
     const float s = dir_sign();
     for (int i = 0; i < cycles; i++) {
       sg.push_back(seg_goto(pos, goto_duty));
       sg.push_back(seg_settle(500));
-      sg.push_back(seg_hold(s * approach, 600));
+      sg.push_back(seg_hold(s * approach, approach_ms));
       sg.push_back(seg_settle(600));
       sg.push_back(seg_hold(-s * duty, 1200));
       sg.push_back(seg_settle(500));

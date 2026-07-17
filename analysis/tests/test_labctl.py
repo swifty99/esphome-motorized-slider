@@ -89,6 +89,14 @@ def test_estimate_step_response_default():
     assert estimate_duration_s("step_response", {}) == pytest.approx(10.5)
 
 
+def test_estimate_reversal_approach_ms():
+    # per cycle: goto 4 + 0.5 + approach + 0.6 + 1.2 + 0.5
+    default = estimate_duration_s("reversal", {"cycles": 1})
+    assert default == pytest.approx(4 + 0.5 + 0.6 + 0.6 + 1.2 + 0.5 + 0.5)
+    longer = estimate_duration_s("reversal", {"cycles": 1, "approach_ms": 1500})
+    assert longer == pytest.approx(default + 0.9)
+
+
 def test_estimate_breakaway_grid_scales_with_grid():
     # per trial: goto 4 + 0.5 + breakaway 3 + hold 0.3 + 0.3 = 8.1 s
     one = estimate_duration_s(
@@ -211,18 +219,20 @@ def test_verdict_fail_on_stale_dump_from_refused_run():
     assert assemble_verdict(ok)[0] == "PASS"
 
 
-def test_verdict_warn_on_endzone_cut():
+def test_verdict_endzone_marker_is_passive_not_warn():
+    # since 2026-07-17 the end-zone flag is a passive data marker (no torque
+    # cut) -- it must not cost the PASS, but the count stays visible
     level, reason = assemble_verdict(
         _clean_facts(experiment="pwm_coupling", ticks_endzone=42))
-    assert level == "WARN"
-    assert "endzone" in reason and "42" in reason
+    assert level == "PASS"
+    assert "endzone marker" in reason and "42" in reason
 
 
-def test_verdict_endzone_is_data_for_step_response():
+def test_verdict_endzone_marker_uniform_for_step_response():
     level, reason = assemble_verdict(
         _clean_facts(experiment="step_response", ticks_endzone=900))
     assert level == "PASS"
-    assert "endzone cut = data" in reason
+    assert "endzone marker" in reason and "900" in reason
 
 
 def test_verdict_warn_on_missing_scope():
@@ -276,7 +286,7 @@ def test_position_pass_mid_travel_stable():
 def test_position_warn_in_end_zone():
     check = evaluate_position([97.8, 97.7, 97.8, 97.9])
     assert check.status == "WARN"
-    assert "end zone" in check.detail and "move the knob" in check.detail
+    assert "end zone" in check.detail and "passive marker" in check.detail
 
 
 def test_position_fail_out_of_range_and_unstable():
@@ -295,23 +305,30 @@ def test_position_fail_too_few_samples():
 # ---------------------------------------------------------------------------
 
 
-def _blip_df(*, moved_counts=200.0, applied=700, endzone=0):
-    """Synthetic blip recording: 300 ms settle, 100 ms pulse, 300 ms settle."""
+def _blip_df(*, moved_counts=200.0, applied=700, endzone=0, thermal=0):
+    """Synthetic blip recording: 300 ms settle, 100 ms pulse, 300 ms settle.
+
+    ``endzone`` ticks are the passive marker (2026-07-17): duty stays applied.
+    ``thermal`` ticks simulate a real cut: duty forced to 0.
+    """
     n = 700
     duty = np.zeros(n, dtype=int)
     duty[300:400] = applied
     adc = np.full(n, 4000.0)
     adc[350:] -= moved_counts  # fader moved during/after the pulse
-    ilk = np.zeros(n, dtype=bool)
+    ez = np.zeros(n, dtype=bool)
     if endzone:
-        ilk[300:300 + endzone] = True
-        duty[300:400] = 0  # interlock forces applied duty to 0
+        ez[300:300 + endzone] = True  # marker only, torque NOT cut
+    th = np.zeros(n, dtype=bool)
+    if thermal:
+        th[300:300 + thermal] = True
+        duty[300:400] = 0  # thermal interlock forces applied duty to 0
     return pd.DataFrame({
         "t_ms": np.arange(n, dtype=float),
         "adc_raw": adc,
         "duty_milli": duty,
-        "ilk_endzone": ilk,
-        "ilk_thermal": np.zeros(n, dtype=bool),
+        "ilk_endzone": ez,
+        "ilk_thermal": th,
         "abort": np.zeros(n, dtype=bool),
     })
 
@@ -336,9 +353,16 @@ def test_blip_fail_torque_never_applied():
 
 
 def test_blip_fail_interlock_cut():
-    check, _delta = evaluate_blip(_blip_df(endzone=100, moved_counts=0.0))
+    check, _delta = evaluate_blip(_blip_df(thermal=100, moved_counts=0.0))
     assert check.status == "FAIL"
-    assert "interlock-cut" in check.detail
+    assert "interlock" in check.detail
+
+
+def test_blip_endzone_marker_does_not_fail():
+    # passive marker ticks with normal movement must not cost the check
+    check, delta = evaluate_blip(_blip_df(endzone=100))
+    assert check.status == "PASS"
+    assert delta == pytest.approx(200.0)
 
 
 def test_blip_fail_empty():

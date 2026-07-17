@@ -74,7 +74,9 @@ ENT_PLAYER = "Lab Player State"
 ENT_TICK = "Lab Tick Time"
 ENT_POSITION = "Slider Position"
 ENT_SYNC = "Lab Sync Pin"
-WANTED_ENTITIES = (ENT_UPTIME, ENT_PLAYER, ENT_TICK, ENT_POSITION, ENT_SYNC)
+ENT_ADC_ERR = "Lab ADC Errors"  # cumulative failed ADC reads since boot; expect 0
+WANTED_ENTITIES = (ENT_UPTIME, ENT_PLAYER, ENT_TICK, ENT_POSITION, ENT_SYNC,
+                   ENT_ADC_ERR)
 
 # ---------------------------------------------------------------------------
 # experiment catalog + duration estimation (mirrors the firmware builder)
@@ -151,7 +153,8 @@ def estimate_duration_s(experiment: str, params: dict) -> float:
     elif experiment == "step_response":
         t = GOTO_MAX_S + 0.5 + get("hold_ms", 5000) / 1000.0 + 0.5
     elif experiment == "reversal":
-        t = int(get("cycles", 3)) * (GOTO_MAX_S + 0.5 + 0.6 + 0.6 + 1.2 + 0.5)
+        t = int(get("cycles", 3)) * (GOTO_MAX_S + 0.5 + get("approach_ms", 600) / 1000.0
+                                     + 0.6 + 1.2 + 0.5)
     elif experiment == "impulse_ladder":
         widths = p.get("durations_ms", [1, 2, 3, 5, 8, 12, 20])
         repeats = int(get("repeats", 5))
@@ -281,17 +284,17 @@ def assemble_verdict(f: RunFacts) -> tuple[str, str]:
     if not f.tick_passed:
         detail = "; ".join(f.tick_reasons) or "gate failed"
         fails.append(f"tickhealth: {detail}")
-    if f.ticks_endzone and f.experiment != "step_response":
-        # step_response uses the end-zone cut as data (spec R4); elsewhere it
-        # means the fader sat/ran outside [3, 97] -- data is suspect, not void.
-        warns.append(f"endzone interlock cut torque on {f.ticks_endzone} ticks")
+    # NOTE: ticks_endzone is deliberately NOT a warn — since 2026-07-17 the
+    # end-zone flag is a passive data marker (no torque cut, spec R4); runs
+    # touching the stops are expected to carry it. Count stays in the PASS line.
     if f.scope_expected and not f.scope_saved:
         warns.append("scope capture missing/failed")
     if fails:
         return "FAIL", "; ".join(fails)
     if warns:
         return "WARN", "; ".join(warns)
-    extra = " (endzone cut = data)" if f.ticks_endzone else ""
+    extra = (f" (endzone marker on {f.ticks_endzone} ticks, passiv)"
+             if f.ticks_endzone else "")
     return "PASS", f"tick gates green, {f.n_records} records, no fatal interlocks{extra}"
 
 
@@ -519,8 +522,8 @@ def summarize_run(meta: dict, df) -> tuple[list[str], RunFacts]:
         f"  adc_raw: start {adc_start:.0f} -> end {adc_end:.0f} counts"
         f" (range {adc.min():.0f}..{adc.max():.0f}, spread {adc.max() - adc.min():.0f});"
         f" position {raw_to_percent(adc_start):.1f} % -> {raw_to_percent(adc_end):.1f} %",
-        f"  interlock ticks: endzone {facts.ticks_endzone}, thermal {facts.ticks_thermal},"
-        f" abort {facts.ticks_abort}, goto {facts.ticks_goto}",
+        f"  interlock ticks: thermal {facts.ticks_thermal}, abort {facts.ticks_abort};"
+        f" passive markers: endzone {facts.ticks_endzone}, goto {facts.ticks_goto}",
     ]
     return lines, facts
 
@@ -600,6 +603,7 @@ def cmd_status(args) -> int:
         ("position", ENT_POSITION, "%"),
         ("tick time", ENT_TICK, "us"),
         ("sync pin", ENT_SYNC, ""),
+        ("adc errors", ENT_ADC_ERR, "(since boot; >0 = wiper data suspect)"),
     ):
         value = states.get(name)
         shown = "<no state>" if value is None else _fmt_state(value)
@@ -624,7 +628,7 @@ def cmd_status(args) -> int:
 # silent power-cycles. Falsifiable checks, one PREFLIGHT line at the end.
 
 POS_LO, POS_HI = 1.0, 99.0            # plausible sensor range
-ENDZONE_LO, ENDZONE_HI = 3.0, 97.0    # firmware interlock zone (R4)
+ENDZONE_LO, ENDZONE_HI = 3.0, 97.0    # end-zone marker band (R4; passive since 2026-07-17)
 POS_MAX_STD_PCT = 0.5                 # stability over ~1 s
 BLIP_DUTY = 0.7                       # real breakaway >= 0.6 (legacy 0.42 is wrong)
 BLIP_WIDTH_MS = 100                   # single short pulse, small displacement
@@ -701,8 +705,9 @@ def evaluate_position(samples: list[float]) -> Check:
     if mean < ENDZONE_LO or mean > ENDZONE_HI:
         return Check(name, "WARN", f"{stats} in the end zone"
                                    f" [<{ENDZONE_LO:.0f} or >{ENDZONE_HI:.0f}]"
-                                   " -- torque experiments will be interlock-cut;"
-                                   " move the knob toward mid-travel")
+                                   " -- passive marker only (no cut), but runs"
+                                   " starting here carry endzone ticks;"
+                                   " consider starting mid-travel")
     return Check(name, "PASS", stats)
 
 
@@ -710,14 +715,15 @@ def evaluate_blip(df) -> tuple[Check, float]:
     """Actuation+feedback chain check on the blip recording.
 
     Returns (check, adc_delta_counts). Catches: dead motor supply, dead
-    bridge, belt off, frozen ADC, end-zone parking. Pure (DataFrame in).
+    bridge, belt off, frozen ADC. Pure (DataFrame in). End-zone ticks are a
+    passive marker since 2026-07-17 (no torque cut) and do not count as cut.
     """
     import numpy as np
 
     name = "3 actuation"
     if len(df) == 0:
         return Check(name, "FAIL", "empty blip recording"), 0.0
-    ilk = int(df["ilk_endzone"].sum() + df["ilk_thermal"].sum() + df["abort"].sum())
+    ilk = int(df["ilk_thermal"].sum() + df["abort"].sum())
     duty = df["duty_milli"].to_numpy()
     adc = df["adc_raw"].to_numpy(dtype=float)
     first_nz = int(np.argmax(duty != 0)) if np.any(duty != 0) else 0
@@ -726,8 +732,8 @@ def evaluate_blip(df) -> tuple[Check, float]:
     moved_pct = delta_counts / 79.0  # counts per % travel (loadrun contract)
     applied = int(np.max(np.abs(duty)))
     if ilk:
-        return Check(name, "FAIL", f"blip was interlock-cut on {ilk} ticks"
-                                   " -- move the knob out of the end zone"), delta_counts
+        return Check(name, "FAIL", f"blip was cut by thermal/abort interlock"
+                                   f" on {ilk} ticks"), delta_counts
     if applied < BLIP_MIN_DUTY_MILLI:
         return Check(name, "FAIL", f"peak applied duty {applied} < {BLIP_MIN_DUTY_MILLI}"
                                    " milli -- torque never reached the bridge"), delta_counts

@@ -85,6 +85,16 @@ sensor:
     update_interval: 1s
     lambda: |-
       return id(lab).get_last_tick_us();
+  # cumulative failed adc_oneshot_read calls since boot — 2026-07-17: the ADC
+  # silently read flat 0 for minutes (only an OTA reboot cleared it). Expect 0;
+  # a climbing counter means the wiper data is garbage right now.
+  - platform: template
+    name: "Lab ADC Errors"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      return id(lab).get_adc_error_count();
   # reboot detector — a crash-reboot would silently lose the recording
   - platform: uptime
     name: "Lab Uptime"
