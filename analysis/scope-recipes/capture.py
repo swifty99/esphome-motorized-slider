@@ -48,9 +48,24 @@ PRESETS = {
         a=("wiper_ac", 0.05, "AC"), b=("isen_0r2", 0.2, "DC"),
         trig=("B", 0.025, "rising"), rate=10e6, dur=1.0, pre=0.01),
     # M3: AISEN shunt current over the whole duty_ladder; wiper confirms stall.
+    # 2026-07-17: 1 MS/s x 35 s (35 M/ch) exceeds the 3203D block buffer
+    # ("no valid timebase found") -> 250 kS/s x 20 s (5 M/ch). Per-rung MEANS
+    # are unaffected; ripple phase work uses the 10 MS/s presets.
     "ladder": dict(
         a=("wiper", 5.0, "DC"), b=("isen_0r2", 0.2, "DC"),
-        trig=("B", 0.025, "rising"), rate=1e6, dur=35.0, pre=0.01),
+        trig=("B", 0.025, "rising"), rate=250e3, dur=20.0, pre=0.01),
+    # M2 spike hunt (RC-filter decision): like "coupling" but Ch B at +/-2 V so
+    # the >500 mV switching spikes do not clip (day 2026-07-17; mean levels
+    # stay on the "ladder"/"alignment" presets at +/-0.2 V). 0.5 s to stay
+    # well inside the block buffer (5 M/ch).
+    "spikes": dict(
+        a=("wiper_ac", 0.05, "AC"), b=("isen_0r2", 2.0, "DC"),
+        trig=("B", 0.025, "rising"), rate=10e6, dur=0.5, pre=0.01),
+    # Wiper-spike amplitude unclipped: +/-0.05 V on Ch A overflowed in all
+    # three 2026-07-17 spike captures -> +/-0.5 V here (RC-filter input datum).
+    "spikes_wiper": dict(
+        a=("wiper_ac", 0.5, "AC"), b=("isen_0r2", 2.0, "DC"),
+        trig=("B", 0.025, "rising"), rate=10e6, dur=0.5, pre=0.01),
 }
 
 
