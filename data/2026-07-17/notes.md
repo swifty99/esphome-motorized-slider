@@ -371,3 +371,22 @@
   Ruhe-Uhr läuft ab 12:20 → nächster Loop-Schritt: gepaarte Kalt-Probe
   (10 ms fwd kalt + 30 s später identer Warm-Referenzpuls; Paar-Ratio statt
   Vergleich gegen globale Warm-Tabelle — tötet die Einzelpuls-Streuung).
+- 2026-07-17 13:03 `148_dither.csv`: Paar-Probe P1 KALT: 10ms fwd @0.8 nach ~43min Ruhe @ 46%
+- 2026-07-17 13:05 `149_dither.csv`: Paar-Probe P1 WARM-Referenz: 10ms fwd @0.8, ~40s nach Kalt-Puls (Run 148)
+- 2026-07-17 13:06 `150_impulse_ladder.csv`: Positionierung: Park @ 65% (Band) fuer Paar-Probe P2 — Test der Positions-Hypothese des Kalt-Malus
+
+## Gepaarte Kalt-Proben (Loop-Session)
+
+- **P1 @ 46 % (Runs 148/149)**: kalt (43 min Ruhe) +1.98 %, warm-Referenz
+  (40 s später, ident. Puls) +2.00 % → **Paar-Ratio 0.99 — KEIN Kalt-Malus**.
+- Widerspruch zu D1 ×0.53 / D3 ×0.49 — aber: alle D-Proben lagen bei 63–67 %
+  (im 55–80-Band), P1 bei 46 %. Auch die kalten Absolutwerte passen dazu
+  (Band: +1.3/+1.4; außerhalb: +1.98). **Hypothese: Kalt-Stiction-Aufbau ist
+  positionsabhängig und wohnt im Band** — konsistent mit "alle Positions-
+  abhängigkeit ist mechanisch" (M3-Befund).
+- Protokoll-Anmerkung: Paar-Ratio misst den Malus nur, wenn EIN 10-ms-Puls die
+  Mechanik voll aufwärmt (D0' ×0.83 @ 20 s mahnt zur Vorsicht) — innerhalb der
+  Paar-Serie ist das Protokoll aber konstant, Quervergleiche gültig.
+- Rig @ 64.3 % geparkt (Run 150, 1-ms-Positionierungspuls) → **P2 @ ~64 % im
+  Band**, gleiche Paarung, nach ~45 min Ruhe. Wenn dort Ratio ~0.5–0.7
+  zurückkommt, ist das Dwell-Gesetz positions-scoped zu formulieren.
