@@ -324,3 +324,11 @@
 - adc errors: 0 all block. Rig end state: idle, 63.9 %, no reboot. Positions can read slightly
   <0 / >100 at the physical stops now (goto 109 pre-flight saw -2.4 % at the low stop — v7 passive
   endzone; goto recovered without help).
+
+## Dwell-Kampagne Fortsetzung (Tages-Session)
+
+- D1 (Run 141): 10 ms fwd @ 0.8 nach **~32 min Dwell** @ 63.9 % → +1.4 %
+  (warm-Referenz +2.64 %, D0 @8.4 min +2.6 %) = **Delivery ×0.53 — erstes
+  echtes Kalt-Signal**; Stiction-Aufbau beginnt zwischen 10 und 30 min.
+  Position 64 % (fwd, außerhalb des rev-Problembands). Weitere Punkte:
+  60 min (~10:10), 120 min (~12:10) geplant; Rig ruht dazwischen unangetastet.
