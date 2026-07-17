@@ -259,3 +259,68 @@
 - 2026-07-17 08:02 `95_dither.csv`: coder cycle 2: endzone-marker wording check (0.8 blip into top end zone)
 - 2026-07-17 08:03 `96_reversal.csv`: coder cycle 2: approach_ms param verification
 - 2026-07-17 08:04 `97_breakaway_grid.csv`: coder cycle 2: move_threshold default 5.0 verification
+- 2026-07-17 08:08 `98_step_response.csv`: Block M3: reposition to 20 %
+- 2026-07-17 08:12 `100_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 FAST fwd @ ~22 % (recovered fetch; scope npz = 99_scope_ladder.npz), VM 5.00 V
+- 2026-07-17 08:14 `102_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 SLOW fwd @ ~22 %, VM 5.00 V
+- 2026-07-17 08:14 `103_step_response.csv`: Block M3: re-goto 20
+- 2026-07-17 08:15 `105_duty_ladder.csv`: Block M3: moving rungs 0.68/0.74/0.80 FAST fwd from 20 % (back-EMF/K), VM 5.00 V
+- 2026-07-17 08:16 `106_step_response.csv`: Block M3: re-goto 20
+- 2026-07-17 08:17 `108_duty_ladder.csv`: Block M3: moving rungs 0.68/0.74/0.80 SLOW fwd from 20 % (back-EMF/K), VM 5.00 V
+- 2026-07-17 08:18 `109_step_response.csv`: Block M3: goto 80
+- 2026-07-17 08:19 `111_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 FAST rev @ ~80 %, VM 5.00 V
+- 2026-07-17 08:20 `113_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 SLOW rev @ ~80 %, VM 5.00 V
+- 2026-07-17 08:20 `115_duty_ladder.csv`: Block M3: moving rungs 0.68/0.74/0.80 FAST rev from 80 % (back-EMF/K), VM 5.00 V
+- 2026-07-17 08:21 `116_step_response.csv`: Block M3: re-goto 80
+- 2026-07-17 08:22 `118_duty_ladder.csv`: Block M3: moving rungs 0.68/0.74/0.80 SLOW rev from 80 % (back-EMF/K), VM 5.00 V
+- 2026-07-17 08:24 `119_step_response.csv`: Block M3: goto 50
+- 2026-07-17 08:25 `121_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 FAST fwd @ ~50 %, VM 5.00 V
+- 2026-07-17 08:25 `123_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 SLOW fwd @ ~50 %, VM 5.00 V
+- 2026-07-17 08:26 `125_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 FAST rev @ ~50 %, VM 5.00 V
+- 2026-07-17 08:27 `127_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 SLOW rev @ ~50 %, VM 5.00 V
+- 2026-07-17 08:28 `128_step_response.csv`: Block M3: goto 65 (band)
+- 2026-07-17 08:29 `130_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 FAST rev @ ~65 % BAND, VM 5.00 V
+- 2026-07-17 08:30 `132_duty_ladder.csv`: Block M3: stall ladder 0.1-0.6 SLOW rev @ ~65 % BAND, VM 5.00 V
+- 2026-07-17 08:31 `134_pwm_coupling.csv`: Block M3/M2: spike capture duty 0.3 FAST stall, Ch B +/-2 V 10 MS/s, VM 5.00 V
+- 2026-07-17 08:32 `136_pwm_coupling.csv`: Block M3/M2: spike capture duty 0.5 FAST stall, VM 5.00 V
+- 2026-07-17 08:33 `138_pwm_coupling.csv`: Block M3/M2: spike capture duty 0.5 SLOW stall, VM 5.00 V
+- 2026-07-17 08:36 `140_pwm_coupling.csv`: Block M3/M2: wiper-spike capture UNCLIPPED (Ch A +/-0.5 V), duty 0.5 FAST stall, VM 5.00 V
+
+## Block M3 (campaign-runner day session, current-resolved ladders + M2 spikes, ~09:0x-10:1x, VM = 5.00 V)
+- TOOLING FIXES (analysis only, no firmware): (1) "ladder" scope preset 1 MS/s x 35 s exceeded the
+  3203D block buffer ("no valid timebase found") -> 250 kS/s x 20 s (per-rung MEANS unaffected).
+  (2) next_seq ran out of 2-digit slots at 99 mid-campaign (both CSV fetches failed!) -> spills to
+  3-digit (100_...); the stall-20fwd-fast dump was recovered from the device recorder afterwards.
+  (3) new presets "spikes" (Ch B +/-2 V, 10 MS/s x 0.5 s) and "spikes_wiper" (Ch A +/-0.5 V) —
+  the old coupling preset would clip both channels.
+- LADDER RUNS (14 scope-paired, all tickhealth structurally clean, all PASS; stall chunks
+  0.1-0.6/0.1 x 2 s; moving chunks 0.68/0.74/0.80 x 0.6 s; positions are actuals):
+  npz/CSV pairs: 99/100 (20fwd fast), 101/102 (20fwd slow), 104/105 (20fwd fast moving),
+  107/108 (20fwd slow moving), 110/111 (80rev fast), 112/113 (80rev slow), 114/115 (80rev fast
+  moving), 117/118 (80rev slow moving), 120/121 (50fwd fast), 122/123 (50fwd slow),
+  124/125 (50rev fast), 126/127 (50rev slow), 129/130 (65rev fast BAND), 131/132 (65rev slow BAND).
+- STALL I(duty) TABLE [mA] (Ch B mean / 0.2 R; FAST | SLOW as fast/slow):
+  duty   20fwd        50fwd        50rev        65rev        80rev
+  0.1   55.4/66.3    54.4/67.5    54.8/67.8    55.7/66.1    54.1/67.1
+  0.2   64.9/73.5    63.8/75.0    63.7/75.3    65.1/73.5    63.3/74.7
+  0.3   75.7/83.1    74.9/84.4    75.2/84.8    76.3/82.9    74.5/84.3
+  0.4   90.4/95.8    89.2/97.4    89.9/97.7    90.5/95.8    89.1/97.1
+  0.5  107.7/112.3  106.8/113.9  106.8/114.0  107.9/112.2  106.0/113.4
+  0.6  136.5/138.2  135.6/139.6  135.5/139.5  136.7/138.2  134.9/139.3
+- FINDINGS: (1) Stall I(duty) is POSITION-INDEPENDENT within ~+/-1.5 % at all duties
+  (Jans Querschnittsfrage: drive train electrically healthy; friction variation is mechanical).
+  (2) I(duty) strongly sublinear at low duty (DCM/recirculation) — R is NOT one number from a
+  naive line; modeler fits the conduction model. (3) SLOW decay reads +5..12 mA at low duty,
+  converging by 0.6 — mode changes the conduction path, both modes measured everywhere.
+  (4) Moving rungs: means 158-166 (0.68) / 186-193 (0.74) / 226-228 mA (0.80); rungs 2-3 are
+  mostly AT-THE-STOP stall (v7 lets the carriage touch; extends the R line to 0.8). Flight-vs-stop
+  split inside rung 1 (npz 104): 152.6 mA flying vs 156.6 mA stopped — back-EMF drop visible but
+  small in the mean; K extraction needs the within-rung time series (wiper channel is in the npz).
+- M2 SPIKES (10 MS/s, stall @ ~64 %): Ch B (+/-2 V, unclipped): FAST 0.3: max 467 mV (p99.9 381);
+  FAST 0.5: max 554 mV (p99.9 433); SLOW 0.5: max 190 mV (p99.9 52) -> SLOW decay is 3-5x cleaner
+  on the current path. Ch A wiper at +/-50 mV OVERFLOWED in all three (133/135/137) -> rerun 139
+  with +/-0.5 V: wiper spikes duty 0.5 FAST = max 219 mV, p99.9 192 mV, rms 45.3 mV (clipped run
+  had said rms 19.6 — clipping understated it 2.3x). RC-filter input datum: ~+/-0.2 V spikes on
+  the wiper ADC node. npz 133/135/137 (B-focus), 139 (wiper unclipped) + CSVs 134/136/138/140.
+- adc errors: 0 all block. Rig end state: idle, 63.9 %, no reboot. Positions can read slightly
+  <0 / >100 at the physical stops now (goto 109 pre-flight saw -2.4 % at the low stop — v7 passive
+  endzone; goto recovered without help).
