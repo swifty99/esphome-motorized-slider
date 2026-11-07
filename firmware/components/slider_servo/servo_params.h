@@ -335,6 +335,17 @@ struct IdentConfig {
   float min_span_counts = 4000.0f;  // row 11
   float span_margin_pct = 4.0f;     // usable span [4, 96] % (= nominal dead band;
                                     // §3 gives no method for the dead band)
+  // D22 (Küche Slider 2, 2026-11-07): a wiper that saturates the ADC at a rail
+  // reads exactly the clamp value with sigma 0. Such a rail is VALID (sensor
+  // dead band, controller-spec Gate answer 8) iff its median sits within
+  // clip_tol of a clamp, sigma <= clip_sigma_max AND the train toward it saw
+  // unclipped samples first (the wiper came from the live range — a flat-0 ADC
+  // never does). raw_at := clamp value; the usable span ends span_margin_pct
+  // inside the last unclipped reading of that train.
+  float adc_clip_hi = 8191.0f;      // 13-bit full scale
+  float adc_clip_lo = 0.0f;         // lower ADC clamp
+  float clip_tol_counts = 16.0f;    // = adc_flat_max / adc_rail_margin
+  float clip_sigma_max = 2.0f;      // counts: "sigma ~ 0" (< 1/4 of rig sigma0)
 
   // --- I4 QUIET (row 13) ---
   int quiet_ms = 2000;              // row 13

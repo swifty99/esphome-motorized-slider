@@ -204,6 +204,11 @@ float Ident::to_pct(float raw) const {
   return (raw - raw0_) / (raw100_ - raw0_) * 100.0f;
 }
 
+bool Ident::is_clipped(float raw) const {
+  return raw >= icfg_->adc_clip_hi - icfg_->clip_tol_counts ||
+         raw <= icfg_->adc_clip_lo + icfg_->clip_tol_counts;
+}
+
 float Ident::med8() const {
   float v[8];
   const int n = raw8_n_;
@@ -517,9 +522,21 @@ float Ident::tick_endpoints() {
     train_stall_ = 0;
     train_count_ = 0;
     train_prev_ = raw_med_;
+    leg_live_seen_ = false;
+    leg_clip_seen_ = false;
     sub_ = S_RUN;
   }
   if (sub_ == S_RUN) {  // row 9
+    {  // D22: where does the wiper leave the live ADC range on this leg?
+      const float raw_now = raw8_[(raw8_head_ + 7) % 8];
+      if (!is_clipped(raw_now)) {
+        leg_live_seen_ = true;
+        leg_last_live_raw_ = raw_now;
+      } else if (leg_live_seen_ && !leg_clip_seen_) {
+        leg_clip_seen_ = true;
+        leg_clip_entry_raw_ = leg_last_live_raw_;
+      }
+    }
     if (pulse_busy()) return pulse_out();
     if (train_count_ > 0) {
       const float prog = std::fabs(to_pct(raw_med_) - to_pct(train_prev_));
@@ -564,6 +581,12 @@ float Ident::tick_endpoints() {
     if (++timer_ < ic.rail_median_ticks) return 0.0f;
     const float med = buf_median();
     const float sig = buf_mad_sigma(med);
+    // D22: an ADC-clipped rail (sigma ~ 0 at a clamp, reached from live range)
+    const bool clipped = !SIL_BUG(bug_, KC_CLIP_REJECT) && is_clipped(med) &&
+                         sig <= ic.clip_sigma_max && leg_live_seen_ && leg_clip_seen_;
+    const int leg = train_dir_ < 0 ? 0 : 1;
+    work_.detail.clipped[leg] = clipped ? 1 : 0;
+    work_.detail.clip_entry_raw[leg] = clipped ? leg_clip_entry_raw_ : med;
     if (train_dir_ < 0) {
       raw_a_ = med;
       sig_a_ = sig;
@@ -579,8 +602,13 @@ float Ident::tick_endpoints() {
   const float span = std::fabs(raw_b_ - raw_a_);
   const float expect = sgn(ic.raw_hint_at_100 - ic.raw_hint_at_0);
   const bool same_side = sgn(raw_b_ - raw_a_) != expect;
-  const bool sig_ok = sig_a_ >= ic.sigma_min_counts && sig_a_ <= ic.sigma_max_counts &&
-                      sig_b_ >= ic.sigma_min_counts && sig_b_ <= ic.sigma_max_counts;
+  // unclipped rails keep the sigma window (flat-0 / stuck ADC stays a FAIL);
+  // a D22-clipped rail is valid with sigma ~ 0 by construction
+  const bool clip_a = work_.detail.clipped[0] != 0;
+  const bool clip_b = work_.detail.clipped[1] != 0;
+  const bool sig_ok =
+      (clip_a || (sig_a_ >= ic.sigma_min_counts && sig_a_ <= ic.sigma_max_counts)) &&
+      (clip_b || (sig_b_ >= ic.sigma_min_counts && sig_b_ <= ic.sigma_max_counts));
   train_dir_ = -1;
   if (span < ic.min_span_counts || same_side || !sig_ok) {
     fail(IdentReason::SPAN);
@@ -603,6 +631,16 @@ float Ident::tick_endpoints() {
   c.counts_per_percent = span / 100.0f;
   c.span_lo = ic.span_margin_pct;
   c.span_hi = 100.0f - ic.span_margin_pct;
+  // D22: targets never clamp into a clipped (dead) end — the usable span ends
+  // the margin inside the last live reading of the train into that rail
+  if (clip_a) {
+    const float lo = to_pct(work_.detail.clip_entry_raw[0]) + ic.span_margin_pct;
+    if (lo > c.span_lo) c.span_lo = lo;
+  }
+  if (clip_b) {
+    const float hi = to_pct(work_.detail.clip_entry_raw[1]) - ic.span_margin_pct;
+    if (hi < c.span_hi) c.span_hi = hi;
+  }
   c.dir_sign = dir_sign_;
   enter(IdentState::I4_QUIET);
   return 0.0f;

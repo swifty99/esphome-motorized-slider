@@ -99,6 +99,8 @@ struct IdentDetail {
   float stall_motion_pct = 0.0f;
   float vm = -1.0f;                                   // stamped supply [V], <0 none
   float rail_duty_used = 0.0f;                        // I3 duty that reached the rails
+  uint8_t clipped[2] = {0, 0};                        // D22: rail A/B ADC-clipped
+  float clip_entry_raw[2] = {0.0f, 0.0f};             // last live reading before the clip
   uint32_t phase_ticks[IDENT_PHASES] = {};
   uint32_t total_ticks = 0;
 };
@@ -271,6 +273,11 @@ class Ident {
   int train_count_{0};
   int train_dir_{-1};        // -1 = toward A (0 %), +1 = toward B
   float raw_a_{0.0f}, raw_b_{0.0f}, sig_a_{0.0f}, sig_b_{0.0f};
+  bool leg_live_seen_{false};    // D22: this train saw unclipped samples
+  bool leg_clip_seen_{false};
+  float leg_last_live_raw_{0.0f};
+  float leg_clip_entry_raw_{0.0f};
+  bool is_clipped(float raw) const;
   float train_prog_sum_{0.0f};
   int train_prog_n_{0};
   // I5
