@@ -188,4 +188,4 @@ HA entity names stay identical (EsphomeZoo house rule). Old component retired.
 | 5 Implementation + SIL | 🔶 SIL-Gate GRÜN (2026-07-17 abends) | Core pure C++ (zero IDF), nativ gebaut; alle 17 Tripwires + Negative Controls grün (docs/findings/sil-phase5-2026-07-17.md); 3 latente Fehler gefunden+gefixt; **Ziel-Deliverable ist die ESPHome-Komponente (Jan)** — Wrapper + HIL-Bring-up: docs/handover-servo-2026-07-18.md (orchestrierte Opus-Session), Flash-Gate = Jans OK |
 | 6 HIL verification | ⬜ | flash gate |
 | 7 Escalations | ⬜ | only if needed |
-| 8 Migration kueche_mief | ⬜ | entity names frozen |
+| 8 Migration kueche_mief | 🔶 Spec-Entwurf (2026-11-07) | `docs/kueche-mief-spec.md`: 2 Slider, Soll-Number per HA, Ident auf dem Gerät (L6-Graph zur Freigabe), SIL-Plant-Schar, Stufen 0–5; wartet auf Jans Antworten §9 + Graph-OK; entity names frozen |
