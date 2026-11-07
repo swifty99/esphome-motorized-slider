@@ -1,18 +1,28 @@
 """slider_servo — the ESPHome servo component (motorslider project).
 
-The delivered product: the pure-C++ control core (core/*, spec §2 graph + EKF
-observer + endgame + CRAWL + L1) wrapped as an ESPHome external component. This
-codegen wires the config to the HAL wrapper (slider_servo.cpp). The core is
-never touched here — it is the same code the SIL harness (sil/) validates.
+The delivered product: the pure-C++ control core (spec §2 graph + EKF observer
++ endgame + CRAWL + L1) wrapped as an ESPHome external component. This codegen
+wires the config to the HAL wrapper (slider_servo.cpp). The core is never
+touched here — it is the same code the SIL harness (sil/) validates.
 
-Drive stack is identical to slider_lab (bench-proven): ADC1 oneshot on GPIO9,
-L9110 AIN1=GPIO11/AIN2=GPIO10 at 19531 Hz, FAST = brake-low decay.
+Multi-instance (kueche-mief-spec R1): `slider_servo:` is MULTI_CONF — a single
+mapping (the rig) or a list of up to 4 sliders. Why MULTI_CONF and not a hub
+block with a `servos:` list: the rig YAML stays byte-identical, every instance
+keeps the familiar `id(servo).command_target(x)` surface, and the shared
+resources (ADC1 unit, GPTimer tick, httpd, arbiter) live in ONE implicit hub
+object that codegen creates once — there is nothing hub-level a user needs to
+configure except http_port, which all instances must agree on.
+
+Drive stack is identical to slider_lab (bench-proven): ADC1 oneshot 13 bit
+12 dB, H-bridge AIN1/AIN2 at 19531 Hz, FAST = brake-low decay.
 """
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
 from esphome import pins
 from esphome.const import CONF_ID
+from esphome.core import CORE, ID
 from esphome.components.esp32 import get_esp32_variant
 from esphome.components.esp32.const import (
     VARIANT_ESP32,
@@ -23,11 +33,18 @@ from esphome.components.esp32.const import (
 CODEOWNERS = ["@jan"]
 DEPENDENCIES = ["esp32"]
 
+MAX_INSTANCES = 4  # == SliderServoHub::kMaxInstances
+MULTI_CONF = MAX_INSTANCES
+LEDC_CHANNELS = 8  # LEDC low-speed channels on S2/S3 (and per speed mode on ESP32)
+
+CONF_INDEX = "index"
 CONF_ADC_PIN = "adc_pin"
 CONF_AIN1_PIN = "ain1_pin"
 CONF_AIN2_PIN = "ain2_pin"
 CONF_SYNC_PIN = "sync_pin"
 CONF_HTTP_PORT = "http_port"
+CONF_IDLE_PATH = "idle_path"
+CONF_IDLE_SAMPLE_DIVIDER = "idle_sample_divider"
 CONF_INVERT_DIRECTION = "invert_direction"
 CONF_RAW_AT_0 = "raw_at_0"
 CONF_RAW_AT_100 = "raw_at_100"
@@ -54,8 +71,14 @@ CONF_GLIDE_PROG_WIN = "glide_prog_win"
 CONF_GLIDE_RUNAWAY_V = "glide_runaway_v"
 CONF_GLIDE_MAX_GAP_MS = "glide_max_gap_ms"
 CONF_COAST_ZONE = "coast_zone"
+CONF_THERMAL_TAU_S = "thermal_tau_s"
 CONF_THERMAL_AVG_MAX = "thermal_avg_max"
+CONF_THERMAL_RESUME = "thermal_resume"
 CONF_U_MAX = "u_max"
+
+IDLE_PATH_AUTO = "auto"
+IDLE_PATH_FULL = "full"
+IDLE_PATH_CHEAP = "cheap"
 
 # ADC1 GPIO -> channel (ESP-IDF adc mapping; rig board is an ESP32-S2: GPIO9 -> ch8)
 ADC1_PIN_TO_CHANNEL = {
@@ -71,16 +94,66 @@ ADC1_PIN_TO_CHANNEL = {
 # the log tag stay "slider_servo".
 slider_servo_ns = cg.esphome_ns.namespace("slider_servo_hal")
 SliderServo = slider_servo_ns.class_("SliderServo", cg.Component)
+SliderServoHub = slider_servo_ns.class_("SliderServoHub")
+
+HUB_ID = "slider_servo_hub"
+_DATA_HUB = "slider_servo_hub_var"
+_DATA_SLOT = "slider_servo_next_slot"
+
+
+def adc1_channel(pin):
+    """GPIO -> ADC1 channel for the configured variant (raises cv.Invalid)."""
+    variant = get_esp32_variant()
+    table = ADC1_PIN_TO_CHANNEL.get(variant)
+    if table is None:
+        raise cv.Invalid(f"slider_servo: ESP32 variant {variant} is not supported")
+    if pin not in table:
+        raise cv.Invalid(f"slider_servo: {variant} has no ADC1 channel on GPIO{pin}")
+    return table[pin]
+
+
+async def get_hub():
+    """The one shared hub (ADC1 owner, tick, httpd, arbiter), created lazily."""
+    if _DATA_HUB not in CORE.data:
+        hub_id = ID(HUB_ID, is_declaration=True, type=SliderServoHub)
+        CORE.data[_DATA_HUB] = cg.new_Pvariable(hub_id)
+    return CORE.data[_DATA_HUB]
+
+
+def _validate_thermal(config):
+    if config[CONF_THERMAL_RESUME] >= config[CONF_THERMAL_AVG_MAX]:
+        raise cv.Invalid(
+            f"{CONF_THERMAL_RESUME} ({config[CONF_THERMAL_RESUME]}) must be below "
+            f"{CONF_THERMAL_AVG_MAX} ({config[CONF_THERMAL_AVG_MAX]}) — hysteresis"
+        )
+    return config
+
 
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(SliderServo),
+            # NVS slot: key 'SVRC' + index. Default = position in the list, so a
+            # single-instance config (the rig) is index 0 == its existing blob.
+            # Set it explicitly for multi-instance configs: reordering the YAML
+            # must not swap two sliders' identified calibrations.
+            cv.Optional(CONF_INDEX): cv.int_range(min=0, max=MAX_INSTANCES - 1),
             cv.Optional(CONF_ADC_PIN, default=9): pins.internal_gpio_input_pin_number,
             cv.Optional(CONF_AIN1_PIN, default=11): pins.internal_gpio_output_pin_number,
             cv.Optional(CONF_AIN2_PIN, default=10): pins.internal_gpio_output_pin_number,
-            cv.Optional(CONF_SYNC_PIN, default=14): pins.internal_gpio_output_pin_number,
+            # optional scope-sync output (HIGH while driving). Omit it where the
+            # pin is taken (kueche-mief: GPIO14 = I2C SCL).
+            cv.Optional(CONF_SYNC_PIN): pins.internal_gpio_output_pin_number,
+            # one httpd for all instances: every instance must name the same port
             cv.Optional(CONF_HTTP_PORT, default=80): cv.port,
+            # IDLE non-owner tick: "full" runs the whole core every tick (rig
+            # behaviour), "cheap" only samples + publishes (R1 budget); "auto"
+            # = full for one instance, cheap for several.
+            cv.Optional(CONF_IDLE_PATH, default=IDLE_PATH_AUTO): cv.one_of(
+                IDLE_PATH_AUTO, IDLE_PATH_FULL, IDLE_PATH_CHEAP, lower=True
+            ),
+            # cheap path samples every N ticks: 1 = 1 kHz ... 10 = 100 Hz (R1 floor)
+            cv.Optional(CONF_IDLE_SAMPLE_DIVIDER, default=1): cv.int_range(min=1, max=10),
             cv.Optional(CONF_INVERT_DIRECTION, default=False): cv.boolean,
             # endpoint calibration (counts->%): raw 8000 -> 0 %, raw 100 -> 100 %
             cv.Optional(CONF_RAW_AT_0, default=8000.0): cv.float_,
@@ -122,29 +195,98 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_GLIDE_RUNAWAY_V, default=200.0): cv.float_range(min=50.0, max=500.0),
             cv.Optional(CONF_GLIDE_MAX_GAP_MS, default=20): cv.int_range(min=4, max=200),
             cv.Optional(CONF_COAST_ZONE, default=0.8): cv.float_range(min=0.0, max=3.5),
-            cv.Optional(CONF_THERMAL_AVG_MAX, default=0.50): cv.float_range(min=0.1, max=1.0),
+            # L1 thermal (Jan 2026-11-07, realistic trip): EMA over |duty| with
+            # tau 120 s trips at 0.95 (~6 min continuous full duty; the hardware
+            # takes 5 min), resumes below 0.60. Defaults == the core's new values.
+            cv.Optional(CONF_THERMAL_TAU_S, default=120.0): cv.float_range(min=1.0, max=600.0),
+            cv.Optional(CONF_THERMAL_AVG_MAX, default=0.95): cv.float_range(min=0.1, max=1.0),
+            cv.Optional(CONF_THERMAL_RESUME, default=0.60): cv.float_range(min=0.05, max=1.0),
             cv.Optional(CONF_U_MAX, default=0.90): cv.float_range(min=0.3, max=1.0),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     cv.only_on_esp32,
+    _validate_thermal,
 )
 
 
+def _final_validate(config):
+    """Cross-instance checks (runs per list entry, sees the whole list)."""
+    full = fv.full_config.get()
+    entries = full.get("slider_servo", [])
+    if not isinstance(entries, list):
+        entries = [entries]
+
+    ports = {e[CONF_HTTP_PORT] for e in entries}
+    if len(ports) > 1:
+        raise cv.Invalid(f"slider_servo: all instances share ONE httpd — http_port differs: {sorted(ports)}")
+
+    indices = [e.get(CONF_INDEX, pos) for pos, e in enumerate(entries)]
+    if len(set(indices)) != len(indices):
+        raise cv.Invalid(f"slider_servo: NVS index must be unique per instance, got {indices}")
+
+    for e in entries:
+        adc1_channel(e[CONF_ADC_PIN])  # raises if the wiper is not on ADC1
+
+    # R2: slider_servo owns the ADC1 unit. A second owner (ESPHome `adc` on an
+    # ADC1 pin) would fail adc_oneshot_new_unit at runtime — refuse it here.
+    adc1_pins = ADC1_PIN_TO_CHANNEL.get(get_esp32_variant(), {})
+    for s in full.get("sensor", []):
+        if s.get("platform") != "adc":
+            continue
+        pin = s.get("pin")
+        number = pin.get("number") if isinstance(pin, dict) else pin
+        if number in adc1_pins:
+            raise cv.Invalid(
+                f"slider_servo owns ADC1: sensor '{s.get('name', s.get('id'))}' uses platform adc on "
+                f"GPIO{number} (ADC1). Use `platform: slider_servo` with `type: adc` instead."
+            )
+
+    # The servo takes LEDC channels from the top (7/6, 5/4, ...) on the last
+    # timer; ESPHome's ledc outputs allocate channel 0, 1, ... with timer =
+    # channel / 2. They must stay below ours.
+    outputs = full.get("output", [])
+    ledc = [o for o in outputs if o.get("platform") == "ledc"]
+    lowest_servo = LEDC_CHANNELS - 2 * len(entries)
+    used = []
+    for pos, o in enumerate(ledc):
+        used.append(o.get("channel", pos))
+    if used and max(used) >= lowest_servo:
+        raise cv.Invalid(
+            f"slider_servo: {len(entries)} instance(s) use LEDC channels {lowest_servo}..{LEDC_CHANNELS - 1}; "
+            f"ESPHome ledc outputs occupy {sorted(used)} — too many ledc outputs for this board"
+        )
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
+
+
 async def to_code(config):
+    hub = await get_hub()
+    slot = CORE.data.get(_DATA_SLOT, 0)
+    CORE.data[_DATA_SLOT] = slot + 1
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
-    variant = get_esp32_variant()
-    table = ADC1_PIN_TO_CHANNEL.get(variant)
-    if table is None:
-        raise cv.Invalid(f"slider_servo: ESP32 variant {variant} is not supported")
-    pin = config[CONF_ADC_PIN]
-    if pin not in table:
-        raise cv.Invalid(f"slider_servo: {variant} has no ADC1 channel on GPIO{pin}")
+    # how many instances in total decides the "auto" idle path
+    entries = CORE.config.get("slider_servo", [])
+    n_instances = len(entries) if isinstance(entries, list) else 1
+    idle_path = config[CONF_IDLE_PATH]
+    if idle_path == IDLE_PATH_AUTO:
+        idle_path = IDLE_PATH_FULL if n_instances == 1 else IDLE_PATH_CHEAP
 
-    cg.add(var.set_adc_channel(table[pin]))
-    cg.add(var.set_pins(config[CONF_AIN1_PIN], config[CONF_AIN2_PIN], config[CONF_SYNC_PIN]))
-    cg.add(var.set_http_port(config[CONF_HTTP_PORT]))
+    cg.add(hub.register_servo(var))
+    cg.add(hub.set_http_port(config[CONF_HTTP_PORT]))
+    cg.add(var.set_hub(hub))
+    cg.add(var.set_index(config.get(CONF_INDEX, slot)))
+    cg.add(var.set_name_id(str(config[CONF_ID].id)))
+    cg.add(var.set_adc_channel(adc1_channel(config[CONF_ADC_PIN])))
+    cg.add(var.set_pins(config[CONF_AIN1_PIN], config[CONF_AIN2_PIN]))
+    if CONF_SYNC_PIN in config:
+        cg.add(var.set_sync_pin(config[CONF_SYNC_PIN]))
+    cg.add(var.set_idle_full(idle_path == IDLE_PATH_FULL))
+    cg.add(var.set_idle_sample_divider(config[CONF_IDLE_SAMPLE_DIVIDER]))
     cg.add(var.set_invert_direction(config[CONF_INVERT_DIRECTION]))
     cg.add(var.set_raw_endpoints(config[CONF_RAW_AT_0], config[CONF_RAW_AT_100]))
     cg.add(var.set_recorder_capacity(config[CONF_RECORDER_CAPACITY]))
@@ -170,5 +312,7 @@ async def to_code(config):
     cg.add(var.set_glide_runaway_v(config[CONF_GLIDE_RUNAWAY_V]))
     cg.add(var.set_glide_max_gap_ms(config[CONF_GLIDE_MAX_GAP_MS]))
     cg.add(var.set_coast_zone(config[CONF_COAST_ZONE]))
+    cg.add(var.set_thermal_tau_s(config[CONF_THERMAL_TAU_S]))
     cg.add(var.set_thermal_avg_max(config[CONF_THERMAL_AVG_MAX]))
+    cg.add(var.set_thermal_resume(config[CONF_THERMAL_RESUME]))
     cg.add(var.set_u_max(config[CONF_U_MAX]))
