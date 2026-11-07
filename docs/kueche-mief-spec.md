@@ -1,9 +1,10 @@
 # Küche-Mief-Spec — echte Hardware, Ident auf dem Gerät, Position per HA
 
-> **ENTWURF, NICHT FREIGEGEBEN.** Spec-Session 2026-11-07. Gate: Jans OK auf den
-> Ident-Trigger-Graphen (§3) und die Antworten zu §9, **bevor** Code entsteht
+> **FREIGEGEBEN 2026-11-07 (Jan).** Graph §3, R1–R8 und alle Vorschläge aus §9
+> sind bestätigt („na klar, Hauptsache es geht"); Antworten zu Q1/Q2 stehen in
+> §9. Die Flash-Gates bleiben bestehen: **jeder Flash braucht Jans OK.**
 > (Muster aus `feedback_spec_reimpl_template`: Graph zuerst, Invarianten als
-> falsifizierbare Tripwires, Alt-Code nur für Namen/Timing).
+> falsifizierbare Tripwires, Alt-Code nur für Namen/Timing.)
 > Baut auf: `controller-spec.md` (freigegeben, Core bleibt Gesetz),
 > `auto-ident-spec.md` (Draft, wird hier produktiv gemacht und korrigiert),
 > `glide-mode-spec.md`, `plant-model.md`. Phase 8 aus `plan.md`.
@@ -244,8 +245,9 @@ Dunst-/Bewässerungslogik für die Testzeit akzeptiert (§9 Q2).
 
 ## 8. Bekannte Risiken
 
-- **Treiber/Spannung unklar** (§9 Q1): falscher Treiber oder Überspannung am Motor
-  macht jede Duty-Aussage hinfällig. Muss vor Stufe 2 geklärt sein.
+- **Treiber/Spannung** (§9 Q1, geklärt): Motor an 5 V vom Platinen-DCDC. Offen
+  bleibt nur der Treiberchip selbst (Annahme L9110 wie Rig); Stufe 2 prüft
+  Verhalten statt Annahme (Polarität, Bewegung, Duty-Mapping).
 - **Tick unter Küche-Last:** Rig-Budget war ohne BME280/UART/Touch gemessen; das
   esp_timer-gegen-WiFi-Problem (siehe `reference_esp32s2_realtime_gotchas`) kann
   mit mehr Tasks zurückkommen. K10 ist deshalb hartes Gate.
@@ -256,7 +258,19 @@ Dunst-/Bewässerungslogik für die Testzeit akzeptiert (§9 Q2).
 - **Dunst-Konsumenten folgen dem fahrenden Slider 2** (R3): gewollt, aber bei
   Tests Lüfter-Ruck einplanen.
 
-## 9. Offene Fragen an Jan
+## 9. Fragen an Jan — beantwortet 2026-11-07
+
+**Antworten:** Q1: Motorspannung **5 V vom DCDC der Platine** (kein Problem für
+den L9110, entspricht der Powerbank-Rig; `K ∝ VM` bleibt vergleichbar, die
+22-V-Messung ist nur das Board-Rail). Q2: **Das Küche-Mief-Gerät hängt für
+Dunst nicht am Slider** — dort läuft nur Automatik-Betrieb, der Slider darf
+tun, was er will, und das Gerät ist der erste Einsatzort (Stufe 1–3 laufen auf
+der Produktions-Firmware, kein abgespecktes Bring-up nötig, Ausfallfenster ist
+unkritisch). Q3–Q7: **alle Vorschläge bestätigt** (Namen R4, Arbiter, SIL-first,
+ADC1-Besitz, R8-Drosselung). Folge für R3: die Sorge „Lüfter folgt dem fahrenden
+Slider" entfällt im Automatik-Betrieb.
+
+Ursprüngliche Fragen (zur Nachvollziehbarkeit):
 
 1. **Treiber und Motorspannung** beider Kanäle: Welcher H-Brücken-Chip sitzt auf
    der Küche-Platine, woher kommt die Motorspannung (Board-Rail ≈ 22 V gemessen,
