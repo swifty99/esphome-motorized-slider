@@ -32,7 +32,11 @@
 #include <string>
 
 #include "esphome/core/component.h"
+#include "esphome/core/defines.h"
 #include "esphome/core/preferences.h"
+#ifdef USE_SENSOR
+#include "esphome/components/sensor/sensor.h"
+#endif
 
 #include <driver/gpio.h>
 #include <driver/gptimer.h>
@@ -81,13 +85,13 @@ struct Record {
 };
 static_assert(sizeof(Record) == 24, "Record layout must stay 24 bytes");
 
-// NVS blob (auto-ident writes this later; bring-up runs on the nominal defaults
-// compiled into UnitCalib). Versioned so a layout change ignores stale data.
-// Layout unchanged since the rig — index 0 reads the rig's existing blob.
-struct StoredCalib {
+// NVS blob: the committed IdentResult (calib + §5 stamp + detail). Key stays
+// 'SVRC' + index; magic/version are new, so an old StoredCalib blob (other
+// size, other magic) fails to load and the unit boots "nicht identifiziert".
+struct StoredIdent {
   uint32_t magic;
   uint32_t version;
-  core::UnitCalib calib;
+  core::IdentResult result;
 };
 
 // What the status text shows besides the controller state (main-task events).
@@ -95,8 +99,11 @@ enum class StatusEvent : uint8_t {
   NONE = 0,
   BOOT_REJECT = 1,        // command before setup completed (R5) — dropped, said so
   QUEUE_FULL = 2,         // arbiter request ring full — command refused, said so
-  IDENT_UNAVAILABLE = 3,  // ident requested, core has no ident yet (stub)
+  IDENT_UNAVAILABLE = 3,  // (unused since the core merge; kept for the enum values)
   ABORTED = 4,            // Abbruch pressed
+  IDENT_RUNNING = 5,      // set_target refused by the core: ident owns the motor
+  IDENT_REJECTED = 6,     // start_ident refused (row 2: not IDLE / fault / busy)
+  IDENT_FINISHED = 7,     // ident ended (OK / FAIL / ABORT) — shown until the next command
 };
 
 // ============================================================================
@@ -107,9 +114,11 @@ class SliderServo : public Component {
 
  public:
   static constexpr uint32_t kCalibMagic = 0x53565243;  // 'SVRC'; NVS key = magic + index
-  static constexpr uint32_t kCalibVersion = 1;
+  static constexpr uint32_t kIdentMagic = 0x53564931;  // 'SVI1' blob magic (IdentResult)
+  static constexpr uint32_t kIdentVersion = 2;
 
   void setup() override;
+  void loop() override;  // main task: NVS commit of a new ident, supply voltage
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::AFTER_WIFI; }
 
@@ -125,7 +134,17 @@ class SliderServo : public Component {
   void set_sync_pin(uint8_t pin) { this->sync_pin_ = pin; }
   void set_idle_full(bool full) { this->idle_full_ = full; }
   void set_idle_sample_divider(uint8_t div) { this->idle_div_ = div > 0 ? div : 1; }
+  // R6: only the I2 start value (IdentConfig::dir_sign_hint) and the sign of
+  // the NOMINAL calib until an ident has learned dir_sign.
   void set_invert_direction(bool inv) { this->invert_direction_ = inv; }
+  // bench/rig: treat the nominal (rig-identified) map as identified -> no R8
+  // throttling without an NVS ident. Default false (kueche-mief-spec R8).
+  void set_assume_identified(bool v) { this->assume_identified_ = v; }
+  void set_fw_major(uint16_t v) { this->icfg_.fw_major = v; }
+#ifdef USE_SENSOR
+  // optional supply voltage for ident preflight/row 30 (any sensor, volts)
+  void set_supply_sensor(sensor::Sensor *s) { this->supply_sensor_ = s; }
+#endif
   void set_raw_endpoints(float raw0, float raw100) {
     this->raw0_ = raw0;
     this->raw100_ = raw100;
@@ -176,9 +195,9 @@ class SliderServo : public Component {
   void set_abort(bool v) { this->abort_req_.store(v); }
 
   // R4 Ident / Abbruch buttons. Ident is queued through the arbiter like a
-  // move (it needs the motor exclusively). Abbruch = torque 0 now: cancels a
-  // queued request and any command latched so far, releases the core, aborts
-  // an ident. See the CORE-ADAPTER section in slider_servo.cpp.
+  // move (it needs the motor exclusively) and keeps the grant until it ends
+  // (OK / FAIL / ABORT). Abbruch = torque 0 now: cancels a queued request and
+  // any command latched so far, aborts an ident (row 26), releases the core.
   bool start_ident();
   void abort_ident();
 
@@ -211,9 +230,12 @@ class SliderServo : public Component {
   bool is_waiting() const { return this->waiting_.load(); }
   bool is_settled() const { return this->settled_.load(); }
   bool is_recorder_full() const { return this->recorder_full_.load(); }
-  // NVS blob present with matching magic+version (the full §5 stamp check is
-  // the ident's job, CORE-ADAPTER) — drives "Ident gültig" / "nicht identifiziert".
-  bool is_calib_valid() const { return this->calib_valid_; }
+  // the core runs on an identified calib (NVS blob adopted with a valid §5
+  // stamp, or an ident committed this boot) — "Ident gültig".
+  bool is_calib_valid() const { return this->identified_pub_.load(); }
+  bool is_ident_active() const { return this->ident_running_.load(); }
+  // R4 "Ident Bericht": values of the identified calib or the FAIL/ABORT reason.
+  std::string get_ident_report() const;
   bool get_sync_level() const {
     return this->sync_pin_ != kNoPin && gpio_get_level((gpio_num_t) this->sync_pin_) != 0;
   }
@@ -230,9 +252,6 @@ class SliderServo : public Component {
   const char *get_name_id() const { return this->name_id_; }
   uint8_t get_index() const { return this->nvs_index_; }
 
-  // auto-ident writes the identified calib here (main task only).
-  void save_calib();
-
  protected:
   static constexpr uint8_t kNoPin = 0xFF;
 
@@ -247,21 +266,16 @@ class SliderServo : public Component {
   void deliver_();              // grant -> execute the latched command
   void handle_release_();       // consume release/abort requests
 
-  float raw_to_percent_(float raw) const { return (this->raw0_ - raw) / (this->raw0_ - this->raw100_) * 100.0f; }
   void sample_(bool adc_free);
+  void publish_ident_();
+  bool read_result_(core::IdentResult *out) const;  // seqlock copy of pub_result_
   void apply_duty_(float duty);
   void set_ledc_(uint8_t idx, uint32_t duty);
   void write_sync_(bool driving);
   void snapshot_(float z, float duty, uint16_t tick_us);
 
-  // ===== CORE-ADAPTER — the ONLY place the wrapper touches core API that the
-  // core agent is still building (Servo::start_ident()/abort_ident(), resync).
-  // Merge = replace these bodies (see slider_servo.cpp). =====
-  bool core_start_ident_();
-  void core_abort_ident_();
-  bool core_ident_active_() const;
-  const char *core_ident_phase_() const;
-  void core_resync_(float z);
+  // re-seed a core frozen on the cheap path (keeps ident result + thermal EMA)
+  void core_resync_(float raw);
 
   // ---- HTTP dump (httpd task) ----
   static esp_err_t dump_handler_(httpd_req_t *req);
@@ -279,6 +293,7 @@ class SliderServo : public Component {
   bool idle_full_{true};     // false = IDLE non-owner takes the cheap path
   uint8_t idle_div_{1};      // cheap path samples every idle_div_ ticks (>=100 Hz)
   bool invert_direction_{false};
+  bool assume_identified_{false};
   float raw0_{8000.0f};
   float raw100_{100.0f};
   uint32_t req_capacity_{45000};
@@ -286,9 +301,26 @@ class SliderServo : public Component {
   // core control (calib_/cfg_ outlive servo_; pointers handed to init())
   core::UnitCalib calib_{};
   core::ServoConfig cfg_{};
+  core::IdentConfig icfg_{};
   core::Servo servo_;
   ESPPreferenceObject pref_;
-  bool calib_valid_{false};
+#ifdef USE_SENSOR
+  sensor::Sensor *supply_sensor_{nullptr};
+#endif
+  std::atomic<float> supply_v_{-1.0f};  // main -> tick; < 0 = no supply ADC
+
+  // Ident result publication. The core resets its committed result and
+  // commit_seq on every init() (resync), so the wrapper keeps its own copy:
+  // pub_result_ is written by the TICK only (boot: before the tick starts),
+  // guarded by the seqlock result_gen_ (odd = write in progress); readers
+  // (main task NVS save, report, httpd header) copy and retry on change.
+  core::IdentResult *pub_result_{nullptr};  // heap (PSRAM preferred), allocated in setup
+  std::atomic<uint32_t> result_gen_{0};
+  std::atomic<uint32_t> pub_seq_{0};   // wrapper commit counter (monotonic)
+  uint32_t saved_seq_{0};              // main task: last seq persisted to NVS
+  uint32_t last_core_seq_{0};          // tick: core commit_seq at last check
+  StoredIdent *io_buf_{nullptr};       // main task scratch (NVS load/save, report), heap
+  std::atomic<uint32_t> ident_date_{0};  // main -> tick: date counter for the stamp
 
   // handles
   adc_oneshot_unit_handle_t adc_{nullptr};
@@ -299,10 +331,11 @@ class SliderServo : public Component {
 
   // tick-task-only state (no other task touches these)
   float z_{50.0f};
+  float raw_f_{0.0f};       // mean of the last sampled raw counts (tick_raw input)
+  bool adc_err_tick_{false};
   int raw_mean_{0};
   uint8_t idle_countdown_{0};
   bool core_stale_{false};    // cheap path ran -> core observer is behind
-  bool cheap_ok_{true};       // thermal EMA low enough to freeze the core
   uint32_t last_seq_{0};
 
   // recorder (free-running ring; written by tick, read by httpd while paused)
@@ -341,6 +374,13 @@ class SliderServo : public Component {
   std::atomic<uint8_t> event_{0};         // StatusEvent
   std::atomic<bool> settled_{false};
   std::atomic<bool> owner_pub_{false};
+  std::atomic<bool> identified_pub_{false};
+  std::atomic<bool> unid_flag_pub_{true};
+  std::atomic<bool> ident_running_{false};
+  std::atomic<uint8_t> ident_state_pub_{0};
+  std::atomic<uint8_t> ident_outcome_pub_{0};
+  std::atomic<uint8_t> ident_reason_pub_{0};
+  std::atomic<float> ident_progress_pub_{0.0f};
   std::atomic<bool> waiting_{false};
   std::atomic<uint32_t> adc_err_count_{0};
   std::atomic<uint32_t> arbiter_blocked_{0};  // non-owner core asked for duty -> forced 0

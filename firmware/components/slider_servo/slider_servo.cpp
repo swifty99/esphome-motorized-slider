@@ -6,6 +6,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
+#include <new>
 
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
@@ -53,12 +55,13 @@ constexpr UBaseType_t kTickTaskPrio = 24;  // above WiFi (23) — esp_timer lost
 // the next tick is at least this far away (one oneshot read is a few tens of
 // µs on the S2; the margin absorbs a WiFi preemption of the main task).
 constexpr uint32_t kSharedReadGuardUs = 250;
-// An IDLE non-owner only freezes its core (cheap path) once its L1 thermal EMA
-// is below this: the re-seed on the next grant restarts the EMA at 0, so the
-// thermal budget error is bounded by this value (with tau = 120 s that is
-// ~6 s of full duty). Above it the instance keeps the full path and the EMA
-// decays exactly as the core computes it.
-constexpr float kThermalCheapMax = 0.05f;
+// Seqlock readers of the published ident result retry this often before
+// giving up for this pass (the tick rewrites it at most once per ident).
+constexpr int kSeqlockTries = 4;
+// Ident stamp date: days since the Unix epoch when SNTP time is valid (after
+// 2020-01-01), else 0 (= unknown).
+constexpr time_t kTimeValidAfter = 1577836800;
+constexpr time_t kSecondsPerDay = 86400;
 // Linear fallback full-scale [mV] per attenuation for 13-bit S2 counts when the
 // eFuse carries no ADC calibration (IDF datasheet ranges, approximate).
 constexpr float kFallbackFullScaleMv[4] = {750.0f, 1050.0f, 1300.0f, 2500.0f};
@@ -70,6 +73,19 @@ int16_t sat16(long v) {
   return static_cast<int16_t>(v);
 }
 float clampf(float v, float lo, float hi) { return std::min(std::max(v, lo), hi); }
+
+// Fixed-point text without float printf (soft-float _dtoa_r crash lesson):
+// writes v with `dec` decimals (1..4) into dst, returns chars written.
+int fmt_fx(char *dst, size_t n, float v, int dec) {
+  long scale = 1;
+  for (int i = 0; i < dec; i++)
+    scale *= 10;
+  long q = lrintf(v * (float) scale);
+  const char *sgn = q < 0 ? "-" : "";
+  if (q < 0)
+    q = -q;
+  return snprintf(dst, n, "%s%ld.%0*ld", sgn, q / scale, dec, q % scale);
+}
 
 }  // namespace
 
@@ -104,6 +120,8 @@ bool SliderServo::start_ident() {
     this->event_.store((uint8_t) StatusEvent::BOOT_REJECT);
     return false;
   }
+  const time_t now = ::time(nullptr);
+  this->ident_date_.store(now > kTimeValidAfter ? (uint32_t) (now / kSecondsPerDay) : 0u);
   this->ident_req_.store(true);
   if (!this->hub_->enqueue_request(this->slot_)) {
     this->ident_req_.store(false);
@@ -157,10 +175,19 @@ void SliderServo::dump_config() {
   } else {
     ESP_LOGCONFIG(TAG, "  sync pin: GPIO%u", this->sync_pin_);
   }
-  ESP_LOGCONFIG(TAG, "  invert_direction: %s, idle path: %s (sample divider %u)",
+  ESP_LOGCONFIG(TAG, "  invert_direction (dir_sign_hint): %s, idle path: %s (sample divider %u)",
                 this->invert_direction_ ? "yes" : "no", this->idle_full_ ? "full" : "cheap", this->idle_div_);
-  ESP_LOGCONFIG(TAG, "  endpoints: raw %.0f -> 0 %%, raw %.0f -> 100 %%", this->raw0_, this->raw100_);
-  ESP_LOGCONFIG(TAG, "  calib: %s", this->calib_valid_ ? "NVS" : "nominal defaults (nicht identifiziert)");
+  ESP_LOGCONFIG(TAG, "  nominal endpoints: raw %.0f -> 0 %%, raw %.0f -> 100 %%", this->raw0_, this->raw100_);
+#ifdef USE_SENSOR
+  const char *supply = this->supply_sensor_ != nullptr ? "sensor" : "none";
+#else
+  const char *supply = "none";
+#endif
+  ESP_LOGCONFIG(TAG, "  calib: %s, supply input: %s",
+                this->identified_pub_.load() ? "identified (NVS ident adopted)"
+                : this->assume_identified_   ? "nominal, assume_identified"
+                                             : "nominal (nicht identifiziert, R8 gedrosselt)",
+                supply);
   ESP_LOGCONFIG(TAG, "  recorder: %u records (%.1f s) in %s", (unsigned) this->capacity_,
                 this->capacity_ / 1000.0f, this->buf_in_psram_ ? "PSRAM" : "internal RAM (fallback!)");
   ESP_LOGCONFIG(TAG, "  cfg: tol %.2f %%, v_cruise %.0f, v_min %.0f, settle %d/%d ms, u_max %.2f",
@@ -185,6 +212,21 @@ bool SliderServo::hw_setup_(adc_oneshot_unit_handle_t adc, uint8_t slot, ledc_ch
   this->ledc_ch_[1] = ch_b;
   this->rec_t0_us_ = t0_us;
   this->idle_countdown_ = 0;
+
+  // ident result copies (~1 KB each) on the heap, PSRAM first: they are touched
+  // by the tick only at an I9 commit and at a resync, never per tick.
+  void *m1 = heap_caps_malloc(sizeof(core::IdentResult), MALLOC_CAP_SPIRAM);
+  if (m1 == nullptr)
+    m1 = heap_caps_malloc(sizeof(core::IdentResult), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  void *m2 = heap_caps_malloc(sizeof(StoredIdent), MALLOC_CAP_SPIRAM);
+  if (m2 == nullptr)
+    m2 = heap_caps_malloc(sizeof(StoredIdent), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (m1 == nullptr || m2 == nullptr) {
+    ESP_LOGE(TAG, "'%s': ident buffer allocation failed", this->name_id_);
+    return false;
+  }
+  this->pub_result_ = new (m1) core::IdentResult();
+  this->io_buf_ = new (m2) StoredIdent();
 
   // latch WHY we last rebooted (diagnostic — a mid-operation reboot was seen
   // once during bring-up, correlated with a pathological slow HTTP dump)
@@ -276,17 +318,17 @@ bool SliderServo::hw_setup_(adc_oneshot_unit_handle_t adc, uint8_t slot, ledc_ch
     return false;
   }
 
-  // --- NVS UnitCalib (key 'SVRC' + index; index 0 == the rig's existing key).
-  //     Valid blob -> per-unit calib; otherwise nominal defaults (R8). ---
-  this->pref_ = global_preferences->make_preference<StoredCalib>(kCalibMagic + this->nvs_index_);
-  StoredCalib sc;
-  if (this->pref_.load(&sc) && sc.magic == kCalibMagic && sc.version == kCalibVersion) {
-    this->calib_ = sc.calib;
-    this->calib_valid_ = true;
-    ESP_LOGI(TAG, "'%s': loaded per-unit calib from NVS", this->name_id_);
-  } else {
-    ESP_LOGI(TAG, "'%s': no valid NVS calib - nominal defaults (nicht identifiziert)", this->name_id_);
-  }
+  // --- nominal calib + ident config from YAML. invert_direction is only the
+  //     R6 prior: the nominal map's dir_sign and the I2 start value. ---
+  const int8_t hint = this->invert_direction_ ? -1 : 1;
+  this->calib_.raw_at_0 = this->raw0_;
+  this->calib_.raw_at_100 = this->raw100_;
+  this->calib_.dir_sign = hint;
+  this->calib_.identified = this->assume_identified_;
+  this->icfg_.instance = this->nvs_index_;
+  this->icfg_.raw_hint_at_0 = this->raw0_;
+  this->icfg_.raw_hint_at_100 = this->raw100_;
+  this->icfg_.dir_sign_hint = hint;
 
   // --- seed the observer at the current position so it starts converged ---
   float p0 = 50.0f;
@@ -302,17 +344,39 @@ bool SliderServo::hw_setup_(adc_oneshot_unit_handle_t adc, uint8_t slot, ledc_ch
     }
     if (got > 0) {
       this->raw_mean_ = (int) (sum / got);
-      p0 = clampf(this->raw_to_percent_((float) sum / (float) got), 0.0f, 100.0f);
+      this->raw_f_ = (float) sum / (float) got;
+      p0 = clampf((this->raw_f_ - this->raw0_) / (this->raw100_ - this->raw0_) * 100.0f, 0.0f, 100.0f);
     }
   }
-  this->z_ = p0;
   this->raw_pub_.store(this->raw_mean_);
 
   // recorder ring disabled inside the core (capacity 0): the wrapper owns the
   // PSRAM ring and taps the core's read-only accessors (T13: control is
   // bit-identical whether or not anything records). R5: the core boots IDLE
   // with zero torque and hold := measured position.
-  this->servo_.init(&this->calib_, &this->cfg_, p0, 0, core::SeededBug::NONE);
+  this->servo_.init(&this->calib_, &this->cfg_, p0, 0, core::SeededBug::NONE, &this->icfg_);
+
+  // --- NVS ident (key 'SVRC' + index, blob = IdentResult). adopt_ident()
+  //     checks the §5 stamp (valid, fw major, instance, endpoint id); any
+  //     mismatch or an old-layout blob -> nominal, "nicht identifiziert" (R8). ---
+  this->pref_ = global_preferences->make_preference<StoredIdent>(kCalibMagic + this->nvs_index_);
+  if (this->pref_.load(this->io_buf_) && this->io_buf_->magic == kIdentMagic &&
+      this->io_buf_->version == kIdentVersion) {
+    if (this->servo_.adopt_ident(this->io_buf_->result, this->raw_f_)) {
+      *this->pub_result_ = this->io_buf_->result;  // tick not running yet: no seqlock needed
+      ESP_LOGI(TAG, "'%s': NVS ident adopted (commit #%u)", this->name_id_,
+               (unsigned) this->io_buf_->result.stamp.commit_counter);
+    } else {
+      ESP_LOGW(TAG, "'%s': NVS ident stamp invalid (fw/instance/endpoints) - nicht identifiziert", this->name_id_);
+    }
+  } else {
+    ESP_LOGI(TAG, "'%s': no valid NVS ident - nominal calib (nicht identifiziert)", this->name_id_);
+  }
+  this->last_core_seq_ = this->servo_.ident_commit_seq();
+  this->identified_pub_.store(this->servo_.calib().identified);
+  this->unid_flag_pub_.store(!this->servo_.calib().identified);
+  p0 = clampf(this->servo_.raw_to_pct(this->raw_f_), 0.0f, 100.0f);
+  this->z_ = p0;
   this->target_echo_.store(p0);
   this->pos_pct_.store(p0);
   this->p_hat_.store(p0);
@@ -333,36 +397,41 @@ void SliderServo::sample_(bool adc_free) {
   // the counter names the failure instead of silence). If the main task holds
   // the shared ADC (adc_free == false) the tick does NOT wait: z stays at the
   // last sample (sample-and-hold, counted by the hub as contention).
+  this->adc_err_tick_ = false;
   if (!adc_free)
     return;
   int32_t sum = 0;
   for (int i = 0; i < kAdcSamples; i++) {
     int raw = 0;
-    if (adc_oneshot_read(this->adc_, (adc_channel_t) this->adc_channel_, &raw) != ESP_OK)
+    if (adc_oneshot_read(this->adc_, (adc_channel_t) this->adc_channel_, &raw) != ESP_OK) {
       this->adc_err_count_.fetch_add(1, std::memory_order_relaxed);
+      this->adc_err_tick_ = true;
+    }
     sum += raw;
   }
   this->raw_mean_ = (int) (sum / kAdcSamples);
-  this->z_ = this->raw_to_percent_((float) sum / (float) kAdcSamples);
+  this->raw_f_ = (float) sum / (float) kAdcSamples;
+  this->z_ = this->servo_.raw_to_pct(this->raw_f_);
   this->raw_pub_.store(this->raw_mean_, std::memory_order_relaxed);
 }
 
 float SliderServo::tick_(bool owner, bool adc_free) {
   const int64_t t_entry = esp_timer_get_time();
 
-  // Path choice: the owner always runs the full core. A non-owner runs it too
-  // unless the cheap path is enabled and its thermal EMA is low (see
-  // kThermalCheapMax). Cheap path = sampling (optionally decimated, >= 100 Hz)
-  // + published state, no observer/controller work, torque 0.
-  const bool full = owner || this->idle_full_ || !this->cheap_ok_;
+  // Path choice: the owner always runs the full core, a non-owner too unless
+  // the cheap path is enabled. Cheap path = sampling (optionally decimated,
+  // >= 100 Hz) + published state, no observer/controller work, torque 0.
+  const bool full = owner || this->idle_full_;
 
   if (full) {
     this->sample_(adc_free);
     const float z = this->z_;
     this->servo_.set_abort(this->abort_req_.load(std::memory_order_relaxed));
 
-    // one control evaluation: observer -> §2 graph -> L1. Returns applied duty.
-    float duty = this->servo_.tick(z);
+    // one evaluation on RAW counts: L6 ident (if running) or observer -> §2
+    // graph, then L1. Returns MOTOR duty — the core applies dir_sign itself.
+    float duty = this->servo_.tick_raw(this->raw_f_, this->supply_v_.load(std::memory_order_relaxed),
+                                       this->adc_err_tick_);
     // R1 backstop: only the grant holder may drive. A non-owner core asking
     // for torque (it cannot from IDLE; this guards a future core change) is
     // forced to 0 and counted — never two bridges driven in one tick.
@@ -374,12 +443,12 @@ float SliderServo::tick_(bool owner, bool adc_free) {
 
     const core::State st = this->servo_.controller().state();
     const bool driving = st == core::State::MOVE || st == core::State::BRAKE || st == core::State::PULSE ||
-                         st == core::State::CRAWL || st == core::State::GLIDE;
+                         st == core::State::CRAWL || st == core::State::GLIDE || st == core::State::IDENT;
     this->write_sync_(driving);
+    this->publish_ident_();
 
     const uint16_t tick_us = (uint16_t) (esp_timer_get_time() - t_entry);
     this->snapshot_(z, duty, tick_us);
-    this->cheap_ok_ = this->servo_.safety().thermal_avg() < kThermalCheapMax;
     if (tick_us > this->full_max_us_.load(std::memory_order_relaxed))
       this->full_max_us_.store(tick_us, std::memory_order_relaxed);
     this->full_ticks_.fetch_add(1, std::memory_order_relaxed);
@@ -406,7 +475,8 @@ float SliderServo::tick_(bool owner, bool adc_free) {
 }
 
 bool SliderServo::owner_done_() const {
-  return this->servo_.controller().state() == core::State::IDLE && !this->core_ident_active_();
+  // an ident keeps the grant until it ends (OK / FAIL / ABORT -> I0, IDLE)
+  return this->servo_.controller().state() == core::State::IDLE && !this->servo_.ident_active();
 }
 
 void SliderServo::deliver_() {
@@ -414,21 +484,28 @@ void SliderServo::deliver_() {
   // up to date first, then execute what is latched. Latest target wins
   // (set-point semantics); commands voided by Abbruch are skipped.
   if (this->core_stale_) {
-    this->core_resync_(this->z_);
+    this->core_resync_(this->raw_f_);
     this->core_stale_ = false;
   }
   if (this->ident_req_.exchange(false)) {
-    if (this->core_start_ident_())
-      return;  // ident owns the motor; the core refuses set_target meanwhile (spec §3)
+    // the grant is ours -> arbiter_free; the core checks IDLE / no fault (row 1/2)
+    if (this->servo_.start_ident(this->ident_date_.load(), true)) {
+      this->ident_running_.store(true, std::memory_order_relaxed);
+      this->event_.store((uint8_t) StatusEvent::NONE, std::memory_order_relaxed);
+      this->last_seq_ = this->cmd_seq_.load();  // a move latched with it is refused anyway
+      return;
+    }
     // refused: say so, and still execute a move latched with it (its ring
     // entry was coalesced into this grant — it must not get lost, K6)
-    this->event_.store((uint8_t) StatusEvent::IDENT_UNAVAILABLE, std::memory_order_relaxed);
+    this->event_.store((uint8_t) StatusEvent::IDENT_REJECTED, std::memory_order_relaxed);
   }
   const uint32_t seq = this->cmd_seq_.load();
   const uint32_t void_upto = this->discard_seq_.load();
   if (seq != this->last_seq_ && seq != void_upto) {
     this->last_seq_ = seq;
-    this->servo_.set_target(this->cmd_target_.load(), this->cmd_speed_.load());
+    if (this->servo_.set_target(this->cmd_target_.load(), this->cmd_speed_.load()) ==
+        core::CmdStatus::REJECTED_IDENT)
+      this->event_.store((uint8_t) StatusEvent::IDENT_RUNNING, std::memory_order_relaxed);
   } else {
     this->last_seq_ = seq;
   }
@@ -436,11 +513,15 @@ void SliderServo::deliver_() {
 
 void SliderServo::handle_release_() {
   if (this->cancel_req_.exchange(false)) {
-    this->core_abort_ident_();
     this->last_seq_ = this->discard_seq_.load();
-    // a frozen core is IDLE with zero torque already — nothing to release
-    if (!this->core_stale_)
-      this->servo_.release();
+    // a frozen core is IDLE with zero torque already — nothing to release.
+    // During L6 abort_ident() is row 26 (duty 0 on the next tick).
+    if (!this->core_stale_) {
+      if (this->servo_.ident_active())
+        this->servo_.abort_ident();
+      else
+        this->servo_.release();
+    }
   }
   if (this->release_req_.exchange(false) && !this->core_stale_)
     this->servo_.release();
@@ -514,8 +595,8 @@ void SliderServo::snapshot_(float z, float duty, uint16_t tick_us) {
 // ============================================================================
 
 void SliderServo::apply_duty_(float duty) {
-  const float t = clampf(duty, -1.0f, 1.0f);
-  const float phys = this->invert_direction_ ? -t : t;
+  // `duty` is MOTOR duty (tick_raw applied dir_sign) — no inversion here.
+  const float phys = clampf(duty, -1.0f, 1.0f);
   auto duty_of = [](float x) -> uint32_t { return (uint32_t) lrintf(clampf(x, 0.0f, 1.0f) * (float) kPwmFull); };
 
   uint32_t a1 = 0, a2 = 0;
@@ -536,30 +617,89 @@ void SliderServo::set_ledc_(uint8_t idx, uint32_t duty) {
 }
 
 // ============================================================================
-// ===== CORE-ADAPTER (Ident + resync) ========================================
-// The core agent delivers Servo::start_ident()/abort_ident() (L6, spec §3) in
-// parallel. Until the merge these are documented stubs: Ident reports
-// "ident nicht verfügbar" and never touches the motor. MERGE JOB (~10 lines):
-//   core_start_ident_()  -> return this->servo_.start_ident();
-//   core_abort_ident_()  -> this->servo_.abort_ident();
-//   core_ident_active_() -> return this->servo_.ident_active();   (keeps the grant)
-//   core_ident_phase_()  -> return this->servo_.ident_phase_name(); (status text)
-//   core_resync_(z)      -> this->servo_.resync(z);   (wish: keeps L1 EMA + logs)
-// All are called from the tick task only (the core is single-threaded).
+// Core resync + ident publication (tick task)
 // ============================================================================
 
-bool SliderServo::core_start_ident_() { return false; }
-void SliderServo::core_abort_ident_() {}
-bool SliderServo::core_ident_active_() const { return false; }
-const char *SliderServo::core_ident_phase_() const { return nullptr; }
+void SliderServo::core_resync_(float raw) {
+  // Re-seed a core that was frozen on the cheap path. init() drops the core's
+  // committed ident and resets L1, so: keep the EMA (preload — conservative,
+  // the frozen value never decayed) and re-adopt the published result.
+  const float ema = this->servo_.safety().thermal_avg();
+  const float p0 = clampf((raw - this->raw0_) / (this->raw100_ - this->raw0_) * 100.0f, 0.0f, 100.0f);
+  this->servo_.init(&this->calib_, &this->cfg_, p0, 0, core::SeededBug::NONE, &this->icfg_);
+  if (this->pub_result_->valid)
+    this->servo_.adopt_ident(*this->pub_result_, raw);
+  this->servo_.preload_thermal(ema);
+  this->last_core_seq_ = this->servo_.ident_commit_seq();
+}
 
-void SliderServo::core_resync_(float z) {
-  // Re-seed a core that was frozen on the cheap path at the current position.
-  // Stage-0 stand-in: init() (no heap: core recorder capacity 0). It resets the
-  // diagnostic logs (pulses/kicks/overshoots) and the L1 thermal EMA — the EMA
-  // error is bounded by kThermalCheapMax because the cheap path is only taken
-  // below it. Core wish: Servo::resync(z) that keeps both.
-  this->servo_.init(&this->calib_, &this->cfg_, clampf(z, 0.0f, 100.0f), 0, core::SeededBug::NONE);
+void SliderServo::publish_ident_() {
+  // I9 commit -> copy into pub_result_ under the seqlock, bump the wrapper's
+  // own monotonic counter (the core's commit_seq restarts on every init()).
+  const uint32_t cs = this->servo_.ident_commit_seq();
+  if (cs != this->last_core_seq_) {
+    this->last_core_seq_ = cs;
+    if (this->servo_.ident_result().valid) {
+      this->result_gen_.fetch_add(1, std::memory_order_acq_rel);  // odd: writing
+      *this->pub_result_ = this->servo_.ident_result();
+      this->result_gen_.fetch_add(1, std::memory_order_acq_rel);  // even: stable
+      this->pub_seq_.fetch_add(1, std::memory_order_release);
+    }
+  }
+  const bool running = this->servo_.ident_active();
+  if (!running && this->ident_running_.load(std::memory_order_relaxed))
+    this->event_.store((uint8_t) StatusEvent::IDENT_FINISHED, std::memory_order_relaxed);
+  this->ident_running_.store(running, std::memory_order_relaxed);
+  this->ident_state_pub_.store((uint8_t) this->servo_.ident_state(), std::memory_order_relaxed);
+  this->ident_outcome_pub_.store((uint8_t) this->servo_.ident_outcome(), std::memory_order_relaxed);
+  this->ident_reason_pub_.store((uint8_t) this->servo_.ident_fail_reason(), std::memory_order_relaxed);
+  this->ident_progress_pub_.store(this->servo_.ident_phase_progress(), std::memory_order_relaxed);
+  this->identified_pub_.store(this->servo_.calib().identified, std::memory_order_relaxed);
+  this->unid_flag_pub_.store(this->servo_.controller().unidentified_flag(), std::memory_order_relaxed);
+}
+
+bool SliderServo::read_result_(core::IdentResult *out) const {
+  if (this->pub_result_ == nullptr || out == nullptr)
+    return false;  // setup failed before the buffers existed
+  for (int i = 0; i < kSeqlockTries; i++) {
+    const uint32_t g1 = this->result_gen_.load(std::memory_order_acquire);
+    if (g1 & 1u)
+      continue;
+    std::memcpy((void *) out, (const void *) this->pub_result_, sizeof(core::IdentResult));
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (this->result_gen_.load(std::memory_order_acquire) == g1)
+      return true;
+  }
+  return false;
+}
+
+// ============================================================================
+// SliderServo — main loop: supply voltage in, NVS commit out
+// ============================================================================
+
+void SliderServo::loop() {
+#ifdef USE_SENSOR
+  if (this->supply_sensor_ != nullptr) {
+    const float v = this->supply_sensor_->state;
+    this->supply_v_.store(this->supply_sensor_->has_state() && !std::isnan(v) ? v : -1.0f,
+                          std::memory_order_relaxed);
+  }
+#endif
+  // An I9 commit is persisted HERE (flash access is forbidden in the tick,
+  // controller-spec §4 #10). Blob, then sync; the wrapper seq is the receipt.
+  const uint32_t seq = this->pub_seq_.load(std::memory_order_acquire);
+  if (this->io_buf_ == nullptr || seq == this->saved_seq_ || !this->read_result_(&this->io_buf_->result))
+    return;
+  this->io_buf_->magic = kIdentMagic;
+  this->io_buf_->version = kIdentVersion;
+  const bool ok = this->pref_.save(this->io_buf_) && global_preferences->sync();
+  this->saved_seq_ = seq;  // also on failure: no flash hammering every loop pass
+  if (ok) {
+    ESP_LOGI(TAG, "'%s': ident commit #%u saved to NVS", this->name_id_,
+             (unsigned) this->io_buf_->result.stamp.commit_counter);
+  } else {
+    ESP_LOGW(TAG, "'%s': NVS ident save FAILED - identified only until reboot", this->name_id_);
+  }
 }
 
 // ============================================================================
@@ -576,6 +716,7 @@ std::string SliderServo::get_state_name() const {
     case core::State::CRAWL: return "crawl";
     case core::State::RELEASED: return "released";
     case core::State::GLIDE: return "glide";
+    case core::State::IDENT: return "ident";
   }
   return "?";
 }
@@ -605,52 +746,100 @@ std::string SliderServo::get_release_name() const {
 std::string SliderServo::get_status_text() const {
   std::string s;
   const auto ev = (StatusEvent) this->event_.load();
-  const char *phase = this->core_ident_phase_();
-  if (phase != nullptr) {
-    s = std::string("ident(") + phase + ")";
+  const auto ist = (core::IdentState) this->ident_state_pub_.load();
+  const auto oc = (core::IdentOutcome) this->ident_outcome_pub_.load();
+  const char *why = core::ident_reason_name((core::IdentReason) this->ident_reason_pub_.load());
+  char buf[16];
+  if (this->ident_running_.load()) {
+    fmt_fx(buf, sizeof(buf), this->ident_progress_pub_.load() * 100.0f, 1);
+    s = std::string("ident(") + core::ident_state_name(ist) + ", " + buf + " %)";
   } else if (ev == StatusEvent::BOOT_REJECT) {
     s = "befehl vor boot-ende verworfen";
   } else if (ev == StatusEvent::QUEUE_FULL) {
     s = "queue voll, befehl abgewiesen";
-  } else if (ev == StatusEvent::IDENT_UNAVAILABLE) {
-    s = "ident nicht verfügbar";
+  } else if (ev == StatusEvent::IDENT_RUNNING) {
+    s = "ident läuft, befehl abgewiesen";
+  } else if (ev == StatusEvent::IDENT_REJECTED) {
+    s = std::string("ident abgelehnt(") + why + ")";
   } else if (this->waiting_.load()) {
     s = "wartet (" + std::to_string(this->hub_->wait_position(this->slot_)) + ". in queue)";
+  } else if (ev == StatusEvent::IDENT_FINISHED && oc == core::IdentOutcome::FAILED) {
+    s = std::string("ident fail(") + why + ")";
+  } else if (ev == StatusEvent::IDENT_FINISHED && oc == core::IdentOutcome::ABORTED) {
+    s = std::string("ident abbruch(") + why + ")";
   } else {
     switch ((core::State) this->state_pub_.load()) {
-      case core::State::IDLE: s = ev == StatusEvent::ABORTED ? "idle (abgebrochen)" : "idle"; break;
+      case core::State::IDLE:
+        s = ev == StatusEvent::ABORTED          ? "idle (abgebrochen)"
+            : ev == StatusEvent::IDENT_FINISHED ? "idle (ident ok)"
+                                                : "idle";
+        break;
       case core::State::MOVE:
       case core::State::BRAKE:
       case core::State::PULSE:
       case core::State::WAIT: s = "moving"; break;
       case core::State::CRAWL:
       case core::State::GLIDE: s = "crawl"; break;
+      case core::State::IDENT: s = "ident"; break;
       case core::State::RELEASED: {
         const auto rr = (core::ReleaseReason) this->release_pub_.load();
-        const char *why = rr == core::ReleaseReason::GRAB        ? "grab"
-                          : rr == core::ReleaseReason::INTERLOCK ? "interlock"
-                          : rr == core::ReleaseReason::WATCHDOG  ? "watchdog"
-                          : rr == core::ReleaseReason::FAULT     ? "fault"
-                                                                 : "cmd";
-        s = std::string("released(") + why + ")";
+        const char *r = rr == core::ReleaseReason::GRAB        ? "grab"
+                        : rr == core::ReleaseReason::INTERLOCK ? "interlock"
+                        : rr == core::ReleaseReason::WATCHDOG  ? "watchdog"
+                        : rr == core::ReleaseReason::FAULT     ? "fault"
+                                                               : "cmd";
+        s = std::string("released(") + r + ")";
         break;
       }
     }
   }
-  if (!this->calib_valid_)
+  if (this->unid_flag_pub_.load())
     s += ", nicht identifiziert";
   return s;
 }
 
-void SliderServo::save_calib() {
-  StoredCalib sc{kCalibMagic, kCalibVersion, this->calib_};
-  if (this->pref_.save(&sc)) {
-    global_preferences->sync();
-    this->calib_valid_ = true;
-    ESP_LOGI(TAG, "'%s': saved per-unit calib to NVS", this->name_id_);
-  } else {
-    ESP_LOGW(TAG, "'%s': NVS calib save failed", this->name_id_);
+std::string SliderServo::get_ident_report() const {
+  // main task only (uses io_buf_). Integer formatting throughout.
+  std::string s;
+  const auto oc = (core::IdentOutcome) this->ident_outcome_pub_.load();
+  const char *why = core::ident_reason_name((core::IdentReason) this->ident_reason_pub_.load());
+  if (this->ident_running_.load())
+    s = std::string("läuft: ") + core::ident_state_name((core::IdentState) this->ident_state_pub_.load()) + "; ";
+  else if (oc == core::IdentOutcome::FAILED)
+    s = std::string("letzter Lauf FAIL: ") + why + "; ";
+  else if (oc == core::IdentOutcome::ABORTED)
+    s = std::string("letzter Lauf ABBRUCH: ") + why + "; ";
+  else if (oc == core::IdentOutcome::REJECTED)
+    s = std::string("letzter Start abgelehnt: ") + why + "; ";
+  else if (oc == core::IdentOutcome::OK)
+    s = "letzter Lauf OK; ";
+  auto *self = const_cast<SliderServo *>(this);
+  if (self->io_buf_ == nullptr)
+    return s + "nicht initialisiert";
+  core::IdentResult &r = self->io_buf_->result;
+  if (!this->read_result_(&r) || !r.valid) {
+    s += this->assume_identified_ ? "kein Ident (assume_identified)" : "kein Ident (nominal)";
+    return s;
   }
+  char b[24];
+  s += std::string("dir=") + (r.calib.dir_sign < 0 ? "-1" : "+1");
+  s += " raw0=" + std::to_string((long) lrintf(r.calib.raw_at_0));
+  s += " raw100=" + std::to_string((long) lrintf(r.calib.raw_at_100));
+  fmt_fx(b, sizeof(b), r.detail.fs_p95, 3);
+  s += std::string(" Fs95=") + b;
+  fmt_fx(b, sizeof(b), r.detail.fs_min, 3);
+  s += std::string(" Fsmin=") + b;
+  fmt_fx(b, sizeof(b), r.calib.impulse_duty, 3);
+  s += std::string(" imp=") + b;
+  fmt_fx(b, sizeof(b), r.calib.u_max, 3);
+  s += std::string(" umax=") + b;
+  s += " vmin=" + std::to_string((long) lrintf(r.calib.v_min_cmd));
+  fmt_fx(b, sizeof(b), r.detail.imp_table[0][3], 2);  // fwd travel at imp_widths_ms[3] = 20 ms
+  s += std::string(" imp20ms=") + b + "%";
+  fmt_fx(b, sizeof(b), r.detail.sigma0_counts, 1);
+  s += std::string(" s0=") + b;
+  s += " #" + std::to_string((unsigned long) r.stamp.commit_counter);
+  return s;
 }
 
 // ============================================================================
@@ -687,25 +876,44 @@ esp_err_t SliderServo::handle_dump_(httpd_req_t *req) {
 
   const size_t bufsz = 8192;
   char *buf = (char *) malloc(bufsz);
-  if (buf == nullptr) {
+  auto *res = (core::IdentResult *) malloc(sizeof(core::IdentResult));
+  if (buf == nullptr || res == nullptr) {
+    free(buf);
+    free(res);
     this->dump_active_.store(false);
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "oom");
     return ESP_OK;
   }
+  // identified calib summary (integer-formatted: no float printf in this task)
+  char calib_line[192] = "";
+  if (this->identified_pub_.load() && this->read_result_(res) && res->valid) {
+    char f1[16], f2[16], f3[16];
+    fmt_fx(f1, sizeof(f1), res->detail.fs_p95, 3);
+    fmt_fx(f2, sizeof(f2), res->calib.impulse_duty, 3);
+    fmt_fx(f3, sizeof(f3), res->calib.u_max, 3);
+    snprintf(calib_line, sizeof(calib_line),
+             "# ident: dir_sign=%d raw_at_0=%ld raw_at_100=%ld F_s_p95=%s impulse_duty=%s u_max=%s commit=%u\n",
+             (int) res->calib.dir_sign, (long) lrintf(res->calib.raw_at_0), (long) lrintf(res->calib.raw_at_100), f1,
+             f2, f3, (unsigned) res->stamp.commit_counter);
+  }
+  free(res);
 
   int len = snprintf(buf, bufsz,
                      "# slider_servo dump\n"
                      "# instance: %s index=%u slot=%u calib=%s\n"
+                     "%s"
                      "# fw: esphome %s, built %s %s\n"
                      "# tick_us_nominal: 1000\n"
-                     "# adc: bits=13 atten=DB_12 samples=4  endpoints: raw%0.f=0%% raw%0.f=100%%\n"
+                     "# adc: bits=13 atten=DB_12 samples=4  endpoints: raw%ld=0%% raw%ld=100%%\n"
                      "# records: %u capacity: %u storage: %s  missed_ticks: %u  adc_errors: %u\n"
-                     "# state: 0=idle 1=move 2=brake 3=pulse 4=wait 5=crawl 6=released 7=glide\n"
+                     "# state: 0=idle 1=move 2=brake 3=pulse 4=wait 5=crawl 6=released 7=glide 8=ident\n"
                      "# settle: 0=none 1=reached 2=gave_up 3=adopted\n"
                      "# release: 0=none 1=grab 2=interlock 3=watchdog 4=fault 5=command\n"
                      "# columns: z/p_hat in %%, v_hat/v_des in %%/s, u_cmd/u_applied/ff in duty\n",
-                     this->name_id_, this->nvs_index_, this->slot_, this->calib_valid_ ? "nvs" : "nominal",
-                     ESPHOME_VERSION, __DATE__, __TIME__, this->raw0_, this->raw100_, (unsigned) count,
+                     this->name_id_, this->nvs_index_, this->slot_,
+                     this->identified_pub_.load() ? "identified" : "nominal", calib_line, ESPHOME_VERSION, __DATE__,
+                     __TIME__, (long) lrintf(this->servo_.calib().raw_at_0),
+                     (long) lrintf(this->servo_.calib().raw_at_100), (unsigned) count,
                      (unsigned) this->capacity_, this->buf_in_psram_ ? "psram" : "internal",
                      (unsigned) this->hub_->get_missed_ticks(), (unsigned) this->adc_err_count_.load());
   esp_err_t err = httpd_resp_send_chunk(req, buf, len);

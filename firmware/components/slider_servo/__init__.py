@@ -21,6 +21,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome import pins
+from esphome.components import sensor
 from esphome.const import CONF_ID
 from esphome.core import CORE, ID
 from esphome.components.esp32 import get_esp32_variant
@@ -46,6 +47,8 @@ CONF_HTTP_PORT = "http_port"
 CONF_IDLE_PATH = "idle_path"
 CONF_IDLE_SAMPLE_DIVIDER = "idle_sample_divider"
 CONF_INVERT_DIRECTION = "invert_direction"
+CONF_ASSUME_IDENTIFIED = "assume_identified"
+CONF_SUPPLY_SENSOR = "supply_sensor"
 CONF_RAW_AT_0 = "raw_at_0"
 CONF_RAW_AT_100 = "raw_at_100"
 CONF_RECORDER_CAPACITY = "recorder_capacity"
@@ -154,7 +157,17 @@ CONFIG_SCHEMA = cv.All(
             ),
             # cheap path samples every N ticks: 1 = 1 kHz ... 10 = 100 Hz (R1 floor)
             cv.Optional(CONF_IDLE_SAMPLE_DIVIDER, default=1): cv.int_range(min=1, max=10),
+            # R6: only the PRIOR — sign of the nominal (unidentified) calib and
+            # the ident's I2 start value (IdentConfig::dir_sign_hint). An ident
+            # learns dir_sign; the core applies it (tick_raw = motor duty).
             cv.Optional(CONF_INVERT_DIRECTION, default=False): cv.boolean,
+            # bench only: run the nominal map as "identified" (no R8 throttling
+            # without an NVS ident). Default false = kueche-mief-spec R8.
+            cv.Optional(CONF_ASSUME_IDENTIFIED, default=False): cv.boolean,
+            # optional supply voltage [V] for ident preflight / row 30, e.g. the
+            # `platform: slider_servo, type: adc` sensor on GPIO1. Omitted = -1
+            # (no supply ADC: rows 3-window/30 inactive).
+            cv.Optional(CONF_SUPPLY_SENSOR): cv.use_id(sensor.Sensor),
             # endpoint calibration (counts->%): raw 8000 -> 0 %, raw 100 -> 100 %
             cv.Optional(CONF_RAW_AT_0, default=8000.0): cv.float_,
             cv.Optional(CONF_RAW_AT_100, default=100.0): cv.float_,
@@ -288,6 +301,10 @@ async def to_code(config):
     cg.add(var.set_idle_full(idle_path == IDLE_PATH_FULL))
     cg.add(var.set_idle_sample_divider(config[CONF_IDLE_SAMPLE_DIVIDER]))
     cg.add(var.set_invert_direction(config[CONF_INVERT_DIRECTION]))
+    cg.add(var.set_assume_identified(config[CONF_ASSUME_IDENTIFIED]))
+    if CONF_SUPPLY_SENSOR in config:
+        supply = await cg.get_variable(config[CONF_SUPPLY_SENSOR])
+        cg.add(var.set_supply_sensor(supply))
     cg.add(var.set_raw_endpoints(config[CONF_RAW_AT_0], config[CONF_RAW_AT_100]))
     cg.add(var.set_recorder_capacity(config[CONF_RECORDER_CAPACITY]))
     cg.add(var.set_tol(config[CONF_TOL]))
