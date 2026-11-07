@@ -359,6 +359,9 @@ struct IdentConfig {
   // --- I4 QUIET (row 13) ---
   int quiet_ms = 2000;              // row 13
   int decimate = 4;                 // every 4th tick into the 512-sample MAD buffer
+  float quiet_clip_repo_pct = 50.0f;  // D22b: I4 after a CLIPPED rail B first
+                                      // repositions here (sigma0 at a clamp = 0
+                                      // would make the observer trust z blindly)
 
   // --- I5 BRACKET (rows 14–17) ---
   float bracket_start = 0.15f;      // row 14

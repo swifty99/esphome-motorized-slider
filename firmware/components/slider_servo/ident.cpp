@@ -704,6 +704,21 @@ float Ident::tick_endpoints() {
 float Ident::tick_quiet() {
   const IdentConfig &ic = *icfg_;
   if (sub_ == S_INIT) {
+    if (clipped_[1]) {  // D22b: sigma0 inside a clamp is 0 by construction —
+      repo_begin(ic.quiet_clip_repo_pct);  // measure it in the live range
+      sub_ = S_REPO;
+    } else {
+      sub_ = S_SETTLE;
+    }
+  }
+  if (sub_ == S_REPO) {
+    float d;
+    if (!repo_step(&d)) return d;
+    sub_ = S_SETTLE;
+    timer_ = 0;
+    return 0.0f;
+  }
+  if (sub_ == S_SETTLE) {
     buf_reset();
     dec_ = 0;
     sub_ = S_RUN;
