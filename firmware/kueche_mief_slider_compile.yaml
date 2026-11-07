@@ -1,0 +1,414 @@
+# kueche-mief — COMPILE-ONLY config for slider_servo Stage 0B (kueche-mief-spec §7)
+#
+# NICHT FLASHEN. Diese Datei beweist offline, dass der Wrapper auf dem echten
+# Pinout der Küche baut (2 Instanzen, ADC1-Besitz, kein Sync-Pin, I2C auf 13/14,
+# Touch 7/8, BME280, UART-PM, ESPHome-ledc daneben). Die Produktions-Config
+# EsphomeZoo/kueche_mief_ESP32.yaml bleibt unberührt; die Migration ist Stufe 5
+# (YAML-Diff an Jan, nach OK). Name/IP absichtlich NICHT die des echten Geräts.
+#
+# Pins (Ist-Aufnahme §1): Slider 1 "Licht UI" Wiper GPIO5, Motor GPIO10/11;
+# Slider 2 "Dunstabzug" Wiper GPIO6, Motor GPIO12/16; Versorgung GPIO1.
+
+esphome:
+  name: kueche-mief-slider-compile
+  friendly_name: Kueche Mief Slider Compile
+
+esp32:
+  board: lolin_s2_mini
+  framework:
+    type: esp-idf
+
+# Recorder-Ringe liegen im PSRAM (2 x 8000 x 24 B = 384 KB). Die heutige
+# Küche-Config hat KEIN psram: -> bei der Migration ergänzen, sonst fällt jeder
+# Ring auf 96 KB internes RAM zurück (Warnung im Log).
+psram:
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [slider_servo]
+
+logger:
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: none
+
+api:
+
+ota:
+  - platform: esphome
+    # K1/R5: OTA löst nie eine Fahrt aus; zusätzlich Drehmoment 0 beim Start
+    # des Flash-Vorgangs (während Flash-Schreibzyklen kann der Tick stocken).
+    on_begin:
+      then:
+        - lambda: |-
+            id(licht).abort_ident();
+            id(dunst).abort_ident();
+
+# ---------------------------------------------------------------------------
+# reale Küche-Last (Auszug aus kueche_mief_ESP32.yaml)
+# ---------------------------------------------------------------------------
+
+i2c:
+  - id: busi2c
+    sda: 13
+    scl: 14          # GPIO14 = SCL -> slider_servo bekommt KEINEN sync_pin
+    scan: true
+
+uart:
+  rx_pin: 18
+  tx_pin: 17
+  baud_rate: 9600
+
+esp32_touch:
+  measurement_duration: 100us
+  denoise_grade: BIT12
+  denoise_cap_level: L0
+  debounce_count: 1
+  filter_mode: IIR_16
+  noise_threshold: 0
+  jitter_step: 0
+  smooth_mode: IIR_2
+  setup_mode: false
+
+output:
+  - platform: slow_pwm
+    pin: GPIO15
+    id: status_led
+    period: 2s
+  # ESPHome-ledc neben dem Servo: belegt LEDC-Kanal 0 (Timer 0); slider_servo
+  # nimmt 7/6 + 5/4 auf Timer 3 (FINAL_VALIDATE prüft die Überschneidung)
+  - platform: ledc
+    pin: GPIO36
+    id: servo_dunst_out
+    frequency: 4882Hz
+
+fan:
+  - platform: speed
+    output: servo_dunst_out
+    id: fan_dunst
+    name: "Dunstabzug Küche Mief"
+
+# ---------------------------------------------------------------------------
+# slider_servo — zwei Instanzen, ein Hub (ADC1, 1-kHz-Tick, Arbiter, httpd)
+# ---------------------------------------------------------------------------
+
+slider_servo:
+  - id: licht                 # Slider 1 "Licht UI"
+    index: 0                  # NVS 'SVRC'+0 — explizit, Umsortieren tauscht keine Kalibrierung
+    adc_pin: 5                # Wiper, ADC1 ch4
+    # Polarität unbekannt (R6): motsliddf hatte pwm_forward = motor_1_l = GPIO11.
+    # Startwert für Ident I2, kein Glaubenssatz.
+    ain1_pin: 11
+    ain2_pin: 10
+    # kein sync_pin (GPIO14 = I2C SCL)
+    http_port: 80             # ein httpd: /servo/licht/dump.csv, /servo/dump.csv (Alias index 0)
+    # Endpunkte PROVISORISCH aus der Legacy-Kalibrierung (0,079 V -> 100 %,
+    # 2,57 V -> 0 %, invertiert), grob in 13-bit-Counts @ 12 dB umgerechnet.
+    # Stufe 1 vergleicht gegen sensor.kuche_licht_ui (±1 %), Ident I3 ersetzt sie.
+    raw_at_0: 8000
+    raw_at_100: 260
+    recorder_capacity: 8000   # 8 s je Instanz
+  - id: dunst                 # Slider 2 "Dunstabzug"
+    index: 1                  # NVS 'SVRC'+1
+    adc_pin: 6                # Wiper, ADC1 ch5
+    ain1_pin: 16              # analog zu Slider 1: motor_2_l = GPIO16 als "vorwärts" (R6 lernt)
+    ain2_pin: 12
+    http_port: 80
+    # normal orientiert: 0,155 V -> 0 %, 2,70 V -> 100 % (provisorisch, s. o.)
+    raw_at_0: 500
+    raw_at_100: 8150
+    recorder_capacity: 8000
+  # idle_path: auto -> bei 2 Instanzen "cheap" (IDLE-Nicht-Besitzer nur Sampling)
+  # thermal_*: KEINE Overrides — die Core-Defaults (tau 120 s, Trip 0,95,
+  # Resume 0,60) gelten.
+
+# ---------------------------------------------------------------------------
+# HA-Oberfläche (R3 Legacy-Entitäten unverändert, R4 neue Entitäten)
+# ---------------------------------------------------------------------------
+
+sensor:
+  # R2: Versorgung über den Wrapper statt platform: adc — ID, Name, Einheit,
+  # device_class, Filter identisch zur Produktions-Config.
+  - platform: slider_servo
+    type: adc
+    pin: GPIO1
+    attenuation: 12db
+    id: "voltage_supply"
+    name: "Küche Mief 24V Versorgung"
+    update_interval: 0.9s
+    device_class: "voltage"
+    state_class: "measurement"
+    filters:
+      - multiply: 11.5
+      - or:
+        - delta: 0.5
+        - throttle: 600sec
+
+  # R3: position_slider_1 behält ID, Namen, Einheit, device_class und die
+  # Filterkette 1:1. Quelle ist die Wiper-Spannung aus dem Servo-Tick (dieselbe
+  # physikalische Größe wie früher platform: adc) -> Werte-Semantik identisch,
+  # bis Jan nach dem Ident auf type: position umstellt (README, Stufe 5).
+  - platform: slider_servo
+    type: wiper_voltage
+    slider_servo_id: licht
+    id: position_slider_1
+    name: "Küche Licht UI"
+    state_class: "measurement"
+    device_class: power_factor
+    unit_of_measurement: "%"
+    update_interval: 32ms
+    filters:
+      - multiply: 10
+      - sliding_window_moving_average:
+          window_size: 6
+          send_every: 4
+      - calibrate_linear:
+         method: exact
+         datapoints:
+          - 0.79 -> 100
+          - 25.7 -> 0
+      - clamp:
+          min_value: 0
+          max_value: 100
+      - or:
+        - delta: 0.5
+        - throttle: 10sec
+
+  # R3: position_slider_2 (ohne Namen, speist Dunst-Logik) — Filter 1:1
+  - platform: slider_servo
+    type: wiper_voltage
+    slider_servo_id: dunst
+    id: position_slider_2
+    update_interval: 1s
+    device_class: power_factor
+    unit_of_measurement: "%"
+    filters:
+      - multiply: 10
+      - or:
+        - delta: 0.2
+        - throttle: 100sec
+      - calibrate_linear:
+         method: exact
+         datapoints:
+          - 1.55 -> 0
+          - 27 -> 100
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+  # kalibrierte Servo-Position je Instanz (intern: keine neue HA-Entität ohne
+  # Jans OK; zeigt, dass ID/Filter frei vergebbar sind)
+  - platform: slider_servo
+    type: position
+    slider_servo_id: licht
+    id: licht_position
+    internal: true
+    update_interval: 200ms
+  - platform: slider_servo
+    type: position
+    slider_servo_id: dunst
+    id: dunst_position
+    internal: true
+    update_interval: 200ms
+
+  # reale I2C-Last: beide BME280 wie in der Produktion (195/199 ms)
+  - platform: bme280_i2c
+    address: 0x76
+    update_interval: 199ms
+    temperature:
+      name: "Küche Abzug aussen Temperatur"
+      oversampling: 16x
+      id: temp3
+    pressure:
+      name: "Küche Abzug aussen Druck"
+      id: press_kitchen
+    humidity:
+      name: "Küche Abzug aussen Feuchtigkeit"
+      id: humid3
+  - platform: bme280_i2c
+    address: 0x77
+    update_interval: 195ms
+    temperature:
+      name: "Küche Abzug innen Temperatur"
+      oversampling: 16x
+      id: temp4
+    pressure:
+      name: "Küche Abzug innen Druck"
+      id: press_inner
+    humidity:
+      name: "Küche Abzug innen Feuchtigkeit"
+      id: humid4
+
+  - platform: sds011
+    pm_2_5:
+      name: "pm25 Küche"
+      id: id_pm25_abluft
+    pm_10_0:
+      name: "pm10 Küche"
+      id: id_pm10_abluft
+
+  # R4 Gerät: A9 im Betrieb (ein Tick bedient beide Instanzen)
+  - platform: template
+    name: "Slider Tick p99"
+    unit_of_measurement: "µs"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 10s
+    lambda: |-
+      return id(licht).get_tick_p99_us();
+  - platform: template
+    name: "Slider Ticks verpasst"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 10s
+    lambda: |-
+      return id(licht).get_missed_ticks();
+  - platform: template
+    name: "Slider ADC Fehler"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 10s
+    lambda: |-
+      return id(licht).get_adc_error_total();
+  # Vorschlag (nicht in R4, Jan bestätigt): Thermal-EMA je Slider + K10-Beleg
+  # des billigen IDLE-Pfads (p99 in µs, Ziel <= 100)
+  - platform: template
+    name: "Küche Licht UI Thermal"
+    accuracy_decimals: 3
+    entity_category: diagnostic
+    update_interval: 10s
+    lambda: |-
+      return id(licht).get_thermal_avg();
+  - platform: template
+    name: "Dunstabzug Slider Thermal"
+    accuracy_decimals: 3
+    entity_category: diagnostic
+    update_interval: 10s
+    lambda: |-
+      return id(dunst).get_thermal_avg();
+  - platform: template
+    name: "Küche Licht UI Idle-Pfad p99"
+    unit_of_measurement: "µs"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 30s
+    lambda: |-
+      return id(licht).get_idle_path_p99_us();
+  - platform: template
+    name: "Dunstabzug Slider Idle-Pfad p99"
+    unit_of_measurement: "µs"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    update_interval: 30s
+    lambda: |-
+      return id(dunst).get_idle_path_p99_us();
+
+# R4: Soll je Slider. KEIN Restore, kein initial_value, kein on_value: der
+# Zustand kommt per lambda aus dem Servo (Hold/Ziel). Mit lambda lehnt ESPHome
+# restore_value grundsätzlich ab ("restore_value cannot be used with lambda") —
+# das ist die strukturell erzwungene Form von restore_value: false. set_action
+# feuert nur auf einen aktiven set-Aufruf aus HA; command_target() verwirft
+# zusätzlich alles vor abgeschlossenem Boot (R5, K1).
+number:
+  - platform: template
+    name: "Küche Licht UI Soll"
+    id: licht_soll
+    min_value: 0
+    max_value: 100
+    step: 0.5
+    unit_of_measurement: "%"
+    mode: box
+    update_interval: 1s
+    lambda: |-
+      return id(licht).get_target();
+    set_action:
+      - lambda: |-
+          id(licht).command_target(x);
+  - platform: template
+    name: "Dunstabzug Slider Soll"
+    id: dunst_soll
+    min_value: 0
+    max_value: 100
+    step: 0.5
+    unit_of_measurement: "%"
+    mode: box
+    update_interval: 1s
+    lambda: |-
+      return id(dunst).get_target();
+    set_action:
+      - lambda: |-
+          id(dunst).command_target(x);
+
+text_sensor:
+  - platform: template
+    name: "Küche Licht UI Status"
+    update_interval: 500ms
+    lambda: |-
+      return id(licht).get_status_text();
+  - platform: template
+    name: "Dunstabzug Slider Status"
+    update_interval: 500ms
+    lambda: |-
+      return id(dunst).get_status_text();
+  # Ident-Bericht: Stub bis zum Core-Merge (CORE-ADAPTER in slider_servo.cpp)
+  - platform: template
+    name: "Küche Licht UI Ident Bericht"
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return std::string("ident nicht verfügbar (Core-Merge ausstehend)");
+  - platform: template
+    name: "Dunstabzug Slider Ident Bericht"
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return std::string("ident nicht verfügbar (Core-Merge ausstehend)");
+
+binary_sensor:
+  - platform: esp32_touch
+    name: "Touch Slider 1"
+    id: esptouch_slider1
+    pin: 7
+    threshold: 250400
+  - platform: esp32_touch
+    name: "Touch Slider 2"
+    id: esptouch_slider2
+    pin: 8
+    threshold: 56000
+  - platform: template
+    name: "Küche Licht UI Ident gültig"
+    entity_category: diagnostic
+    lambda: |-
+      return id(licht).is_calib_valid();
+  - platform: template
+    name: "Dunstabzug Slider Ident gültig"
+    entity_category: diagnostic
+    lambda: |-
+      return id(dunst).is_calib_valid();
+
+button:
+  - platform: template
+    name: "Küche Licht UI Ident"
+    on_press:
+      - lambda: |-
+          id(licht).start_ident();
+  - platform: template
+    name: "Küche Licht UI Abbruch"
+    on_press:
+      - lambda: |-
+          id(licht).abort_ident();
+  - platform: template
+    name: "Dunstabzug Slider Ident"
+    on_press:
+      - lambda: |-
+          id(dunst).start_ident();
+  - platform: template
+    name: "Dunstabzug Slider Abbruch"
+    on_press:
+      - lambda: |-
+          id(dunst).abort_ident();
