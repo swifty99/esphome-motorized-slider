@@ -14,6 +14,9 @@
 //   supply_adc <V_nom>     supply ADC present, reads V_nom * supply_scale
 //   supply_window <lo> <hi> | hint <raw0> <raw100> | dir_hint <+1|-1>
 //   adc_clip_hi <raw> | adc_clip_lo <raw>   ADC clamps (plant AND IdentConfig)
+//   icfg <name> <value>    IdentConfig override (experiments: bracket_adapt_margin,
+//                          bracket_fine, hold_ms, pre_hold_settle_ms, repo_settle_ms,
+//                          repo_tol_pct)
 //   fs_patch <lo> <hi> <fs> breakaway := fs on plant nodes in [lo, hi] %
 //   boot_nvs               adopt the synthetic previous NVS result at boot
 //   csv_every <n>          CSV decimation (default 1)
@@ -62,6 +65,7 @@ struct IScenario {
   int dir_hint = 1;
   bool boot_nvs = false;
   int csv_every = 1;
+  std::vector<std::pair<std::string, float>> icfg_over;  // experiment hooks
   float patch_lo = -1.0f, patch_hi = -1.0f, patch_fs = 0.0f;  // tight spot
   std::vector<IEvent> events;
 };
@@ -102,6 +106,12 @@ bool parse(const char *path, IScenario &sc) {
     else if (tok == "dir_hint") ss >> sc.dir_hint;
     else if (tok == "boot_nvs") sc.boot_nvs = true;
     else if (tok == "csv_every") ss >> sc.csv_every;
+    else if (tok == "icfg") {
+      std::string n;
+      float v;
+      ss >> n >> v;
+      sc.icfg_over.emplace_back(n, v);
+    }
     else if (tok == "fs_patch") ss >> sc.patch_lo >> sc.patch_hi >> sc.patch_fs;
     else if (tok == "at" || tok == "on") {
       IEvent e;
@@ -202,6 +212,19 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
   icfg.supply_hi = sc.win_hi;
   icfg.adc_clip_hi = sc.var.clip_hi;  // the ident knows its ADC's clamps
   icfg.adc_clip_lo = sc.var.clip_lo;
+  for (const auto &o : sc.icfg_over) {  // SIL experiments only (proposals, not defaults)
+    if (o.first == "bracket_adapt_margin") icfg.bracket_adapt_margin = o.second;
+    else if (o.first == "bracket_fine") icfg.bracket_fine = o.second;
+    else if (o.first == "hold_ms") icfg.hold_ms = static_cast<int>(o.second);
+    else if (o.first == "pre_hold_settle_ms") icfg.pre_hold_settle_ms = static_cast<int>(o.second);
+    else if (o.first == "repo_settle_ms") icfg.repo_settle_ms = static_cast<int>(o.second);
+    else if (o.first == "repo_tol_pct") icfg.repo_tol_pct = o.second;
+    else if (o.first == "fine_stop_at_quiet") icfg.fine_stop_at_quiet = o.second != 0.0f;
+    else {
+      std::fprintf(stderr, "ident scenario: unknown icfg '%s'\n", o.first.c_str());
+      return 2;
+    }
+  }
 
   TruthPlant base = TruthPlant::from(nominal, sc.perturb);
   if (sc.patch_hi > sc.patch_lo)  // a tight spot on the track (both directions)

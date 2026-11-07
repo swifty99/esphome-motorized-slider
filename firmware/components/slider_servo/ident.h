@@ -285,6 +285,7 @@ class Ident {
   float hold_duty_{0.0f};
   float hold_ref_{0.0f};
   float low_moving_{0.0f};
+  float quiet_hi_{0.0f};       // highest coarse duty held quiet at this point (P1)
   float fs_min_so_far_{2.0f};
   bool first_point_{true};
   // I6

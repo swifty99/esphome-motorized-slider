@@ -362,6 +362,11 @@ struct IdentConfig {
   float bracket_adapt_margin = 0.10f;  // "adaptiv" (D5): later points start at
                                        // min(F_s so far) - 0.10 on the 0.05 grid,
                                        // never below bracket_start (120 s budget)
+  bool fine_stop_at_quiet = false;  // PROPOSAL P1 (findings Nachtrag, OFF = spec
+                                    // as built): end the downward fine walk once
+                                    // the next try is at/below a coarse duty this
+                                    // point already held quiet — that hold IS the
+                                    // downward confirmation. Needs Jan's OK.
   float positions_pct[IDENT_POSITIONS] = {15, 26, 38, 50, 62, 74, 85};  // row 14
   int sustain_ms = 50;              // row 15 "Sustain-Bit nach 50 ms"
   float sustain_pct = 3.0f;         // auto-ident #5 "sustained >= 3 %"

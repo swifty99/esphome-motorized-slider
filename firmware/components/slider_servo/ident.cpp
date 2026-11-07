@@ -150,6 +150,7 @@ bool Ident::start(bool ok_to_start, const UnitCalib &prior,
   fs_min_so_far_ = 2.0f;
   first_point_ = true;
   low_moving_ = 0.0f;
+  quiet_hi_ = 0.0f;
   train_dir_ = -1;
   work_.detail.rail_duty_used = 0.0f;
   train_prog_sum_ = 0.0f;
@@ -729,7 +730,10 @@ float Ident::tick_bracket() {
           if (sus >= ic.sustain_pct) work_.detail.sustain_bits[bp_dir_] |= (1u << bp_pos_);
         }
         low_moving_ = hit;
-        if (low_moving_ - ic.bracket_fine >= ic.bracket_start - 1e-4f) {
+        const float next_try = low_moving_ - ic.bracket_fine;
+        const bool confirmed = ic.fine_stop_at_quiet && quiet_hi_ > 0.0f &&
+                               next_try <= quiet_hi_ + 1e-4f;  // P1 (default off)
+        if (!confirmed && next_try >= ic.bracket_start - 1e-4f) {
           repo_begin(ic.positions_pct[bp_pos_]);
           sub_ = S_REPO;  // confirm one fine step lower
         } else {
@@ -743,6 +747,7 @@ float Ident::tick_bracket() {
           sub_ = S_EVAL;
           return 0.0f;
         }
+        quiet_hi_ = hold_duty_;
         hold_duty_ += ic.bracket_step;
         if (hold_duty_ > ic.bracket_max + 1e-4f) {  // row 16
           fail(IdentReason::NO_BREAKAWAY);
@@ -757,6 +762,7 @@ float Ident::tick_bracket() {
       if (low_moving_ < fs_min_so_far_) fs_min_so_far_ = low_moving_;
       first_point_ = false;
       low_moving_ = 0.0f;
+      quiet_hi_ = 0.0f;
       const int reps = SIL_BUG(bug_, K9_SINGLE_PROBE) ? 1 : IDENT_REPS;
       if (++bp_rep_ >= reps) {
         bp_rep_ = 0;
