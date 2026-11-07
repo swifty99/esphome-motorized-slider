@@ -101,10 +101,11 @@ slider_servo:
   - id: licht                 # Slider 1 "Licht UI"
     index: 0                  # NVS 'SVRC'+0 — explizit, Umsortieren tauscht keine Kalibrierung
     adc_pin: 5                # Wiper, ADC1 ch4
-    # Polarität unbekannt (R6): motsliddf hatte pwm_forward = motor_1_l = GPIO11.
-    # Startwert für Ident I2, kein Glaubenssatz.
+    # Hardware-Befund 2026-11-07 (Stufe 2): positive Duty = Position hoch mit
+    # ain1=11/ain2=10, invert_direction false. Nur Prior (R6): Ident I2 lernt dir_sign.
     ain1_pin: 11
     ain2_pin: 10
+    supply_sensor: voltage_supply   # Board-Rail (nicht die 5-V-Motorspannung): nur Row 30
     # kein sync_pin (GPIO14 = I2C SCL)
     http_port: 80             # ein httpd: /servo/licht/dump.csv, /servo/dump.csv (Alias index 0)
     # Endpunkte PROVISORISCH aus der Legacy-Kalibrierung (0,079 V -> 100 %,
@@ -116,8 +117,12 @@ slider_servo:
   - id: dunst                 # Slider 2 "Dunstabzug"
     index: 1                  # NVS 'SVRC'+1
     adc_pin: 6                # Wiper, ADC1 ch5
-    ain1_pin: 16              # analog zu Slider 1: motor_2_l = GPIO16 als "vorwärts" (R6 lernt)
+    ain1_pin: 16
     ain2_pin: 12
+    # Hardware-Befund 2026-11-07: ain1=16/ain2=12 treibt falsch herum -> Prior
+    # invertiert (dir_sign_hint -1, nominal dir_sign -1); Ident I2 lernt es.
+    invert_direction: true
+    supply_sensor: voltage_supply
     http_port: 80
     # normal orientiert: 0,155 V -> 0 %, 2,70 V -> 100 % (provisorisch, s. o.)
     raw_at_0: 500
@@ -355,19 +360,19 @@ text_sensor:
     update_interval: 500ms
     lambda: |-
       return id(dunst).get_status_text();
-  # Ident-Bericht: Stub bis zum Core-Merge (CORE-ADAPTER in slider_servo.cpp)
+  # R4 Ident-Bericht: Werte der identifizierten Calib bzw. FAIL-/Abbruch-Grund
   - platform: template
     name: "Küche Licht UI Ident Bericht"
     entity_category: diagnostic
-    update_interval: 60s
+    update_interval: 10s
     lambda: |-
-      return std::string("ident nicht verfügbar (Core-Merge ausstehend)");
+      return id(licht).get_ident_report();
   - platform: template
     name: "Dunstabzug Slider Ident Bericht"
     entity_category: diagnostic
-    update_interval: 60s
+    update_interval: 10s
     lambda: |-
-      return std::string("ident nicht verfügbar (Core-Merge ausstehend)");
+      return id(dunst).get_ident_report();
 
 binary_sensor:
   - platform: esp32_touch
