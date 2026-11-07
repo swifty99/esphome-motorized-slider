@@ -620,3 +620,77 @@ def test_d22_flat_zero_adc_still_fails(tmp_path, extra):
     assert s["run1_reason"] in ("span", "adc_flat")
     assert s["nvs_writes"] == 0 and s["nvs_hash_start"] == s["nvs_hash_end"]
     assert s["run1_post_u_max"] == 0.0
+
+
+# ------------------------------------------- D23: ident start parked in a clamp
+# Küche Slider 2 (2026-11-07): parked at the upper rail inside the ADC clamp
+# (raw 8191, sigma 0) -> preflight FAIL(adc_rail), and the R8 pulses could not
+# move it out. Now the clamp is a rail START: I2 escapes (both signs, widths
+# 20..250 ms, 0.8 -> 1.0) and continues normally. Negative control: bug 29
+# restores the old preflight FAIL. A dead ADC (flat 0 / stuck at full scale)
+# never leaves the band and still FAILs with its preflight reason, no stamp.
+
+KR_RAILSTART_OFF = 29
+RS_BASE = "hint 500 8150\npot_inv 0\ndir_hint -1\n"
+RS_CASES = {
+    "hi": ("p0 99.5\npot_raw 500 8600\nadc_clip_hi 8191", "adc_rail"),
+    # noise x3 here found D22b: sigma0 was measured INSIDE the clamp (= 0) ->
+    # the observer trusted z blindly and BRAKE never saw stillness
+    "hi_pol_noise3": ("p0 99.5\npot_raw 500 8600\nadc_clip_hi 8191\nmotor_pol -1\nnoise 3",
+                      "adc_rail"),
+    "hi_sticky": ("p0 99.5\npot_raw 500 8600\nadc_clip_hi 8191\nfs_patch 95 100 0.92",
+                  "adc_rail"),  # 0.8 cannot break away: escalation to 1.0 needed
+    "lo": ("p0 0.5\npot_raw -400 7800", "adc_flat"),
+    "lo_pol_noise3": ("p0 0.5\npot_raw -400 7800\nmotor_pol -1\nnoise 3", "adc_flat"),
+}
+
+
+def chk_railstart(s):
+    if s["run1_outcome"] != "ok":
+        return False, f"{s['run1_outcome']}/{s['run1_reason']}"
+    if s["dir_sign"] != s["truth_dir_sign"]:
+        return False, "polarity"
+    for k in range(1, int(s["moves"]) + 1):
+        tgt, fin = s[f"move{k}_ctl_target"], s[f"move{k}_final_cal"]
+        if abs(fin - tgt) > LAND_TOL:
+            return False, f"move {k}: {tgt:.2f} -> {fin:.2f}"
+    return True, "ok"
+
+
+@pytest.mark.parametrize("name", list(RS_CASES))
+def test_d23_rail_start_escapes_and_identifies(tmp_path, name):
+    variant, old_reason = RS_CASES[name]
+    sc = (f"seed 3\nduration 200\n{RS_BASE}{variant}\nat 0.1 ident\n"
+          "on DONE 1.0 target 30\non DONE 4.0 target 70\non DONE 7.0 target 99\n")
+    s, _ = run_ident(tmp_path, sc, tag=f"rs_{name}")
+    ok, msg = chk_railstart(s)
+    assert ok, f"positive {name}: {msg}"
+    assert s["total_ticks"] <= BUDGET_TICKS
+    sb, _ = run_ident(tmp_path, sc, bug=KR_RAILSTART_OFF, tag=f"rsb_{name}")
+    ok_bad, _ = chk_railstart(sb)
+    assert not ok_bad, f"D23 negative control vacuous ({name})"
+    assert sb["run1_reason"] == old_reason  # the field failure, reproduced
+
+
+@pytest.mark.parametrize("fault,reason", [("flat", "adc_flat"), ("rail", "adc_rail")])
+def test_d23_dead_adc_still_fails_after_escape(tmp_path, fault, reason):
+    s, _ = run_ident(tmp_path, sc_ident(extra=f"at 0.0 adc {fault}\n"), tag=f"dead_{fault}")
+    assert s["run1_outcome"] == "failed" and s["run1_reason"] == reason
+    assert s["nvs_writes"] == 0 and s["nvs_hash_start"] == s["nvs_hash_end"]
+    assert s["run1_post_u_max"] == 0.0
+
+
+def test_d22b_sigma0_measured_outside_the_clamp(tmp_path):
+    # rail B clipped: I4 must reposition into the live range before sigma0
+    sc = sc_ident(CLIP_BASE + "pot_raw 500 8300\nadc_clip_hi 8191\nnoise 3")
+    s, _ = run_ident(tmp_path, sc, tag="d22b")
+    assert s["run1_outcome"] == "ok" and s["clipped_b"] == 1
+    assert 15.0 <= s["sigma0"] <= 40.0, f"sigma0 {s['sigma0']} (true ~25.5 counts)"
+
+
+def test_d23_hand_during_escape_aborts(tmp_path):
+    sc = (f"seed 3\nduration 200\n{RS_BASE}p0 99.5\npot_raw 500 8600\n"
+          "adc_clip_hi 8191\nat 0.1 ident\non I2 0.1 drag_rel -20 0.1\n")
+    s, _ = run_ident(tmp_path, sc, tag="rs_hand")
+    assert s["run1_outcome"] == "aborted" and s["run1_reason"] == "hand"
+    assert s["nvs_writes"] == 0 and s["run1_post_u_max"] == 0.0
