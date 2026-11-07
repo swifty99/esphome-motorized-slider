@@ -207,6 +207,10 @@ float Ident::to_pct(float raw) const {
   return (raw - raw0_) / (raw100_ - raw0_) * 100.0f;
 }
 
+bool Ident::supply_valid(float v) const {
+  return std::isfinite(v) && v > icfg_->supply_valid_min_v;
+}
+
 bool Ident::is_clipped(float raw) const {
   return raw >= icfg_->adc_clip_hi - icfg_->clip_tol_counts ||
          raw <= icfg_->adc_clip_lo + icfg_->clip_tol_counts;
@@ -387,11 +391,25 @@ float Ident::tick(const IdentInputs &in) {
       return 0.0f;
     }
     const float vm = work_.detail.vm;
-    if (vm > 0.0f && in.supply_v >= 0.0f &&
-        std::fabs(in.supply_v - vm) > ic.supply_dev * vm) {  // row 30
-      do_abort(IdentReason::SUPPLY);
-      last_out_ = 0.0f;
-      return 0.0f;
+    if (SIL_BUG(bug_, KS_SUPPLY_OLD)) {
+      if (vm > 0.0f && in.supply_v >= 0.0f &&
+          std::fabs(in.supply_v - vm) > ic.supply_dev * vm) {  // old row 30
+        do_abort(IdentReason::SUPPLY);
+        last_out_ = 0.0f;
+        return 0.0f;
+      }
+    } else if (supply_valid(in.supply_v)) {  // D24: unknown never aborts
+      if (vm <= 0.0f) {  // no reference yet: adopt the first valid stretch
+        if (sup_n_ < 64) sup_buf_[sup_n_++] = in.supply_v;
+        if (sup_n_ >= ic.supply_adopt_samples) {
+          std::nth_element(sup_buf_, sup_buf_ + sup_n_ / 2, sup_buf_ + sup_n_);
+          work_.detail.vm = sup_buf_[sup_n_ / 2];
+        }
+      } else if (std::fabs(in.supply_v - vm) > ic.supply_dev * vm) {  // row 30
+        do_abort(IdentReason::SUPPLY);
+        last_out_ = 0.0f;
+        return 0.0f;
+      }
     }
     if (phase_ticks_ > phase_limit_) {  // row 29
       fail(IdentReason::WATCHDOG);
@@ -439,6 +457,7 @@ float Ident::tick_preflight(const IdentInputs &in) {
     buf_reset();
     supply_sum_ = 0.0f;
     supply_n_ = 0;
+    sup_n_ = 0;
     sub_ = S_RUN;
   }
   // row 3 (changed 2026-11-07): L1 not tripped and EMA below the resume level
@@ -447,16 +466,27 @@ float Ident::tick_preflight(const IdentInputs &in) {
     return 0.0f;
   }
   buf_push(in.raw);
-  if (in.supply_v >= 0.0f) {
-    supply_sum_ += in.supply_v;
-    supply_n_++;
+  if (SIL_BUG(bug_, KS_SUPPLY_OLD)) {
+    if (in.supply_v >= 0.0f) {
+      supply_sum_ += in.supply_v;
+      supply_n_++;
+    }
+  } else if (supply_valid(in.supply_v)) {  // D24: decimated valid readings
+    if (supply_n_++ % 8 == 0 && sup_n_ < 64) sup_buf_[sup_n_++] = in.supply_v;
   }
   if (++timer_ < ic.preflight_ms) return 0.0f;
 
   const float med = buf_median();
   const float sigma = buf_mad_sigma(med);
   const bool window = ic.supply_lo < ic.supply_hi;
-  const float vm = supply_n_ > 0 ? supply_sum_ / static_cast<float>(supply_n_) : -1.0f;
+  float vm = -1.0f;
+  if (SIL_BUG(bug_, KS_SUPPLY_OLD)) {
+    vm = supply_n_ > 0 ? supply_sum_ / static_cast<float>(supply_n_) : -1.0f;
+  } else if (sup_n_ >= ic.supply_ref_min_samples) {
+    std::nth_element(sup_buf_, sup_buf_ + sup_n_ / 2, sup_buf_ + sup_n_);
+    vm = sup_buf_[sup_n_ / 2];
+  }
+  if (vm <= 0.0f) sup_n_ = 0;  // D24: late adoption starts from scratch
   // D23: parked inside an ADC clamp (sigma ~ 0 AT the clamp value) is a rail
   // START, not yet a defect — I2 tries to escape first; a dead ADC never
   // leaves the band and still FAILs (adc_flat / adc_rail) after the escape.

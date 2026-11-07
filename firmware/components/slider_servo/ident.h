@@ -266,6 +266,9 @@ class Ident {
   // I1
   float supply_sum_{0.0f};
   int supply_n_{0};
+  float sup_buf_[64] = {};     // D24: valid supply readings for the median
+  int sup_n_{0};
+  bool supply_valid(float v) const;
   // I2
   int probe_pass_{0}, probe_idx_{0};
   float probe_sign_{1.0f};

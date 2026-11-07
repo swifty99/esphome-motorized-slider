@@ -41,6 +41,7 @@ enum class SeededBug : int {
   KF_ROGUE_IDENT = 27,       // undocumented transition: CMD Ident in I5 restarts I1
   KC_CLIP_REJECT = 28,       // ADC-clipped rail rejected by the sigma window (pre-fix)
   KR_RAILSTART_OFF = 29,     // start parked in an ADC clamp -> old preflight FAIL
+  KS_SUPPLY_OLD = 30,        // supply stamp = mean of any >= 0 reading, no late adoption
 };
 
 #ifdef SLIDER_SIL_BUGS

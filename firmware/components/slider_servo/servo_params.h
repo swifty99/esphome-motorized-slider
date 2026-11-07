@@ -445,6 +445,16 @@ struct IdentConfig {
                                     // stops in <= 3 tau = 66 ms; rig creep 1.3 %
                                     // / 400 ms stays below 3 %)
   float supply_dev = 0.15f;         // row 30
+  // D24 (field 2026-11-07, ABORT(supply) right after boot): only a finite
+  // reading > supply_valid_min_v counts (0 V / -1 / NaN = "unknown", e.g. the
+  // sensor has no state yet or its first sample is a boot transient). The
+  // stamp is the MEDIAN of the valid preflight readings (>= supply_ref_min_samples
+  // decimated by 8); otherwise unknown, and the median of the first
+  // supply_adopt_samples valid readings after the start becomes the reference.
+  // Row 30 is armed only once a reference exists; unknown readings never abort.
+  float supply_valid_min_v = 0.5f;
+  int supply_ref_min_samples = 8;   // x8 decimation = >= 64 valid preflight ticks
+  int supply_adopt_samples = 32;    // valid ticks collected for a late reference
   float adc_err_rate_max = 0.10f;   // row 32: EMA(100 ticks) of the error flag
   int adc_err_window_ticks = 100;   // row 32: EMA horizon of the error flag
   int hand_min_win_ms = 10;         // row 27: shortest usable comparison window
