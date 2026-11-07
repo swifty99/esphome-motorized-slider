@@ -21,6 +21,35 @@ esphome run     slider_lab_rig.yaml     # flash — only with Jan's OK (house ru
 Any ESPHome ≥2026.7 works; the EsphomeZoo venv has one:
 `/Users/jan/dev/repos/EsphomeZoo/.venv/bin/esphome`.
 
+## `slider_servo` — der Servo (Produkt)
+
+Die ESPHome-Komponente um den pure-C++-Core, mit bis zu 4 Instanzen
+(`slider_servo:` als Mapping oder Liste). Ein gemeinsamer Hub besitzt ADC1,
+den 1-kHz-Tick, den httpd und den Motor-Arbiter (genau eine Instanz mit
+Duty ≠ 0). Details, Locking-Modell und Küche-Mapping stehen in
+[`../docs/findings/wrapper-stage0-2026-11-07.md`](../docs/findings/wrapper-stage0-2026-11-07.md).
+
+| Config | Zweck | Stand 2026-11-07 |
+|---|---|---|
+| `slider_lab_rig.yaml` | Rig (.115), eine Instanz | Compile grün, 784 986 B Flash / RAM 125 972 B |
+| `kueche_mief_slider_compile.yaml` | **nur Compile**, echtes Küche-Pinout, 2 Instanzen | Compile grün, 805 682 B Flash / RAM 129 816 B — **nicht flashen** |
+
+```sh
+unset VIRTUAL_ENV                        # nie EsphomeZoo script/setup laufen lassen
+/opt/homebrew/bin/esphome compile kueche_mief_slider_compile.yaml
+```
+
+- **Dumps:** `/servo/<id>/dump.csv` je Instanz; `/servo/dump.csv` ist der Alias
+  auf Index 0, dort holen die servo-hil-Tools ab.
+- **Sensor-Plattform** `sensor: - platform: slider_servo` mit `type: position`,
+  `type: wiper_voltage` oder `type: adc` (weitere ADC1-Pins, z. B. die
+  Versorgung). `platform: adc` auf ADC1 wird abgelehnt, weil `slider_servo` ADC1
+  besitzt.
+- **`sync_pin`** ist optional.
+- **`index`** legt den NVS-Slot `SVRC` + Index fest.
+- **Thermal:** `thermal_tau_s` / `thermal_avg_max` / `thermal_resume`, Default
+  120 s / 0,95 / 0,60.
+
 ## Running experiments
 
 Experiments start **only** on explicit command (R9): the HA service or the
