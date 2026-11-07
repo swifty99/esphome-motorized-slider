@@ -29,6 +29,8 @@
 using namespace slider_servo;
 using namespace slider_sil;
 
+int run_ident_mode(const char *path, const char *out_path, int bug);  // ident_mode.cpp
+
 namespace {
 
 struct Event {
@@ -60,6 +62,7 @@ struct Scenario {
   float glide_runaway_v = -1.0f;
   int glide_max_gap_ms = -1;
   float coast_zone = -1.0f;
+  bool unidentified = false;  // R8: run the core on an unidentified calib
   std::vector<Event> events;
 };
 
@@ -78,6 +81,7 @@ bool parse_scenario(const char *path, Scenario &sc) {
     else if (tok == "duration") ss >> sc.duration_s;
     else if (tok == "rest") ss >> sc.rest_s;
     else if (tok == "recorder") ss >> sc.recorder;
+    else if (tok == "unidentified") sc.unidentified = true;
     else if (tok == "perturb")
       ss >> sc.perturb.d_fwd >> sc.perturb.d_rev >> sc.perturb.d_m >> sc.perturb.d_b;
     else if (tok == "config") {
@@ -129,7 +133,8 @@ bool parse_scenario(const char *path, Scenario &sc) {
 }
 
 const char *STATE_NAMES[] = {"IDLE", "MOVE",     "BRAKE", "PULSE",
-                             "WAIT", "CRAWL", "RELEASED", "GLIDE"};
+                             "WAIT", "CRAWL", "RELEASED", "GLIDE",
+                             "IDENT"};
 const char *FLAG_NAMES[] = {"none", "reached", "gave_up", "adopted"};
 const char *REASON_NAMES[] = {"none", "grab", "interlock", "watchdog",
                               "fault", "command"};
@@ -142,6 +147,9 @@ int main(int argc, char **argv) {
   int bug = 0;
   int recorder_override = -1;
   long seed_override = -1;
+  float thermal_s = 0.0f, thermal_duty = 0.0f;
+  bool thermal_old = false;
+  bool ident_mode = false;
   for (int i = 1; i < argc; i++) {
     if (!std::strcmp(argv[i], "--out") && i + 1 < argc) out_path = argv[++i];
     else if (!std::strcmp(argv[i], "--bug") && i + 1 < argc) bug = std::atoi(argv[++i]);
@@ -149,14 +157,41 @@ int main(int argc, char **argv) {
       recorder_override = std::atoi(argv[++i]);
     else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc)
       seed_override = std::atol(argv[++i]);
+    else if (!std::strcmp(argv[i], "--thermal") && i + 2 < argc) {
+      thermal_s = static_cast<float>(std::atof(argv[++i]));
+      thermal_duty = static_cast<float>(std::atof(argv[++i]));
+    } else if (!std::strcmp(argv[i], "--thermal-old")) thermal_old = true;
+    else if (!std::strcmp(argv[i], "--ident")) ident_mode = true;
     else scenario_path = argv[i];
+  }
+  if (thermal_s > 0.0f) {
+    // L1 thermal tripwire (Jan 2026-11-07): drive Safety alone with a constant
+    // commanded duty and report the first trip tick. --thermal-old restores the
+    // pre-2026-11-07 lab-rig values (the negative control).
+    ServoConfig tcfg;
+    if (thermal_old) {
+      tcfg.thermal_tau_s = 10.0f;
+      tcfg.thermal_avg_max = 0.5f;
+      tcfg.thermal_resume = 0.35f;
+    }
+    Safety s;
+    s.init(&tcfg);
+    const long n = static_cast<long>(thermal_s * 1000.0f);
+    long trip = -1;
+    for (long i = 0; i < n; i++) {
+      s.clamp(thermal_duty);
+      if (s.tripped() && trip < 0) trip = i;
+    }
+    std::printf("thermal_trip_tick=%ld\nthermal_ema=%.4f\n", trip, s.thermal_avg());
+    return 0;
   }
   if (!scenario_path) {
     std::fprintf(stderr,
                  "usage: sim_runner <scenario> [--out csv] [--bug N] "
-                 "[--recorder N] [--seed N]\n");
+                 "[--recorder N] [--seed N] [--ident] | --thermal <s> <duty>\n");
     return 2;
   }
+  if (ident_mode) return run_ident_mode(scenario_path, out_path, bug);
   Scenario sc;
   if (!parse_scenario(scenario_path, sc)) {
     std::fprintf(stderr, "cannot parse scenario %s\n", scenario_path);
@@ -166,6 +201,11 @@ int main(int argc, char **argv) {
   if (seed_override >= 0) sc.seed = static_cast<uint32_t>(seed_override);
 
   UnitCalib nominal;  // per-unit defaults = identified snapshot
+  // R8: UnitCalib::identified defaults to false (a fresh unit is unidentified);
+  // the legacy suite runs on the rig's identified snapshot, so it is set
+  // EXPLICITLY here — the core default is not bent to fit the tests.
+  nominal.identified = !sc.unidentified;
+  const bool ext = sc.unidentified;  // extended trace columns (new features only)
   ServoConfig cfg;
   if (sc.impulse_max > 0) cfg.impulse_max = sc.impulse_max;
   if (sc.tol > 0.0f) cfg.tol = sc.tol;
@@ -200,7 +240,8 @@ int main(int argc, char **argv) {
     }
     std::fprintf(csv,
                  "tick,pos,vel,stuck,z,p_hat,v_hat,u_cmd,u,state,flag,reason,"
-                 "clamped,v_des,ff,cmd,obs_stuck,rejects,p00\n");
+                 "clamped,v_des,ff,cmd,obs_stuck,rejects,p00%s\n",
+                 ext ? ",unid,cmd_status" : "");
   }
 
   const int n_max = static_cast<int>(sc.duration_s * 1000.0f);
@@ -270,7 +311,7 @@ int main(int argc, char **argv) {
       std::fprintf(
           csv,
           "%d,%.4f,%.3f,%d,%.4f,%.4f,%.3f,%.4f,%.4f,%s,%s,%s,%d,%.2f,%.4f,%d,"
-          "%d,%d,%.3e\n",
+          "%d,%d,%.3e",
           i, plant.p(), plant.v(), plant.stuck() ? 1 : 0, z,
           servo.observer().p_hat(), servo.observer().v_hat(),
           servo.u_cmd_last(), u, STATE_NAMES[static_cast<int>(c.state())],
@@ -279,6 +320,10 @@ int main(int argc, char **argv) {
           servo.safety().clamped() ? 1 : 0, c.last_v_des(), c.last_ff(),
           cmd_marker, servo.observer().model_stuck() ? 1 : 0,
           servo.observer().gate_rejects(), servo.observer().p00());
+      if (ext)
+        std::fprintf(csv, ",%d,%d", c.unidentified_flag() ? 1 : 0,
+                     static_cast<int>(c.last_cmd_status()));
+      std::fputc('\n', csv);
     }
 
     if (first_cmd_tick >= 0 && settled_at < 0 && c.settled() &&

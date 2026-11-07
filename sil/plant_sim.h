@@ -48,6 +48,34 @@ struct TruthPlant {
   }
 };
 
+// kueche-mief-spec §4 "SIL-Plant-Schar": the unit variants the ident must
+// survive. Defaults = the legacy plant exactly (every factor multiplies by 1
+// or adds 0, so the legacy trace stays byte-identical).
+struct PlantVariant {
+  float friction_scale = 1.0f;  // fs AND fk x scale (breakaway family 0.4–1.25)
+  int motor_pol = 1;            // +1 / -1 swapped wiring / 0 not connected
+  bool pot_inv = true;          // true = rig: raw HIGH at plant x = 0
+  float raw_lo = 100.0f;        // wiper counts at the two rails
+  float raw_hi = 8000.0f;
+  float noise_scale = 1.0f;     // sigma x1..x3
+  float backlash = 0.0f;        // % play between carriage and wiper (<= 2)
+  float supply_scale = 1.0f;    // VM / VM_nom: effective drive x (±15 %)
+  float fs_spread = 0.0f;       // relative sigma of the breakaway per stick
+                                // event (rig trial spread ±0.04 ~ 2 sigma)
+};
+
+// friction-scaled copy of a truth plant (scenario variants / runtime events)
+inline void scale_friction(TruthPlant &t, const TruthPlant &base, float k) {
+  for (int i = 0; i < slider_servo::KINETIC_NODES; i++) {
+    t.u.fk_fwd[i] = base.u.fk_fwd[i] * k;
+    t.u.fk_rev[i] = base.u.fk_rev[i] * k;
+  }
+  for (int i = 0; i < slider_servo::STATIC_NODES; i++) {
+    t.u.fs_fwd[i] = base.u.fs_fwd[i] * k;
+    t.u.fs_rev[i] = base.u.fs_rev[i] * k;
+  }
+}
+
 class PlantStepper {
  public:
   void init(const TruthPlant *tp, float p0, float dt = 0.001f) {
@@ -56,6 +84,13 @@ class PlantStepper {
     v_ = 0.0f;
     dt_ = dt;
     stuck_ = true;
+  }
+  // variant hooks (defaults keep the legacy physics bit-for-bit)
+  void set_drive_gain(float g) { gain_ = g; }  // motor_pol * supply_scale
+  void set_fs_spread(float rel, uint32_t seed) {
+    spread_ = rel;
+    rng_.seed(seed);
+    redraw();
   }
 
   // grab / disturbance injection: infinitely stiff hand (stated limitation)
@@ -68,14 +103,16 @@ class PlantStepper {
   // One 1 kHz tick with applied duty. No end-zone cut here: Gate answer 8 —
   // the servo has no positional clamp; the rail itself is the hard stop.
   void step(float u) {
+    u *= gain_;
     const UnitCalib &pu = tp_->u;
+    const bool was_stuck = stuck_;
     const float m = pu.m, b = pu.b;
     float p = p_, v = v_;
     bool stuck = stuck_;
 
     if (stuck) {
       const float sdir = u > 0 ? 1.0f : (u < 0 ? -1.0f : 0.0f);
-      if (sdir != 0.0f && std::fabs(u) > slider_servo::fs_map(pu, p, sdir)) {
+      if (sdir != 0.0f && std::fabs(u) > fs_eff(pu, p, sdir)) {
         stuck = false;
         v = 0.0f;
       }
@@ -98,7 +135,7 @@ class PlantStepper {
         if (v != 0.0f && ((v_new > 0) != (v > 0) || v_new == 0.0f)) {
           // decelerated through zero: re-stick unless u re-breaks
           const float rdir = u != 0.0f ? (u > 0 ? 1.0f : -1.0f) : sdir;
-          if (std::fabs(u) <= slider_servo::fs_map(pu, p, rdir)) {
+          if (std::fabs(u) <= fs_eff(pu, p, rdir)) {
             v_new = 0.0f;
             stuck = true;
           }
@@ -108,7 +145,7 @@ class PlantStepper {
         }
         v = v_new;
         if (std::fabs(v) < tp_->v_stick &&
-            std::fabs(u) <= slider_servo::fs_map(pu, p, sdir)) {
+            std::fabs(u) <= fs_eff(pu, p, sdir)) {
           v = 0.0f;
           stuck = true;
         }
@@ -121,6 +158,7 @@ class PlantStepper {
       p = 100.0f; v = 0.0f; stuck = true;
     }
     p_ = p; v_ = v; stuck_ = stuck;
+    if (stuck && !was_stuck && spread_ > 0.0f) redraw();  // new contact, new F_s
   }
 
   float p() const { return p_; }
@@ -128,9 +166,28 @@ class PlantStepper {
   bool stuck() const { return stuck_; }
 
  private:
+  float fs_eff(const UnitCalib &pu, float p, float dir) const {
+    return slider_servo::fs_map(pu, p, dir) * mult_;
+  }
+  void redraw() {
+    if (spread_ <= 0.0f) {
+      mult_ = 1.0f;
+      return;
+    }
+    float e = gauss_(rng_);
+    if (e > 2.0f) e = 2.0f;
+    if (e < -2.0f) e = -2.0f;
+    mult_ = 1.0f + spread_ * e;
+  }
+
   const TruthPlant *tp_{nullptr};
   float p_{50.0f}, v_{0.0f}, dt_{0.001f};
   bool stuck_{true};
+  float gain_{1.0f};
+  float spread_{0.0f};
+  float mult_{1.0f};
+  std::mt19937 rng_;
+  std::normal_distribution<float> gauss_{0.0f, 1.0f};
 };
 
 // ADC model (silharness SensorSim): gaussian floor (duty-dependent) + PWM
@@ -177,6 +234,72 @@ class SensorSim {
   float scale_{-79.0f};
   bool frozen_{false};
   float freeze_val_{0.0f};
+};
+
+// Raw-count wiper model for the ident family (the legacy SensorSim above is
+// untouched): same gaussian floor + PWM spike tail + 0.25-count quantization,
+// in COUNTS, with orientation, span, noise scale, carriage/wiper backlash and
+// fault injection. The ident sees nothing but this number.
+class RawSensor {
+ public:
+  enum class Fault : uint8_t { NONE, FLAT, RAIL, STUCK };
+  static constexpr float FULL_SCALE = 8191.0f;
+
+  void init(const UnitCalib *nominal, uint32_t seed, const PlantVariant &v, float x0) {
+    nom_ = nominal;
+    v_ = v;
+    rng_.seed(seed);
+    xs_ = x0;
+  }
+  void set_fault(Fault f, float stuck_val = 0.0f) {
+    fault_ = f;
+    stuck_val_ = stuck_val;
+  }
+  void set_frozen(bool on) { frozen_ = on; }
+  float raw_at_x(float x) const {
+    const float r0 = v_.pot_inv ? v_.raw_hi : v_.raw_lo;
+    const float r100 = v_.pot_inv ? v_.raw_lo : v_.raw_hi;
+    return r0 + x * (r100 - r0) / 100.0f;
+  }
+  float wiper_x() const { return xs_; }
+
+  float sample_raw(float x, float duty) {
+    // backlash: the wiper follows the carriage only beyond half the play
+    const float h = 0.5f * v_.backlash;
+    if (x - xs_ > h) xs_ = x - h;
+    else if (xs_ - x > h) xs_ = x + h;
+    float raw = raw_at_x(xs_);
+    const float sigma = (std::fabs(duty) > 0 ? nom_->sigma_pwm_counts
+                                             : nom_->sigma0_counts) * v_.noise_scale;
+    raw += gauss_(rng_) * sigma;
+    if (std::fabs(duty) > 0 && uni_(rng_) < SensorSim::SPIKE_PROB_PWM) {
+      const float mag = 60.0f + uni_(rng_) * 180.0f;
+      raw += (uni_(rng_) < 0.5f ? -mag : mag);
+    }
+    if (frozen_) raw = frozen_val_;
+    else frozen_val_ = raw;
+    switch (fault_) {
+      case Fault::FLAT: raw = 0.0f; break;
+      case Fault::RAIL: raw = FULL_SCALE; break;
+      case Fault::STUCK: raw = stuck_val_; break;
+      default: break;
+    }
+    if (raw < 0.0f) raw = 0.0f;
+    if (raw > FULL_SCALE) raw = FULL_SCALE;
+    return std::round(raw * 4.0f) / 4.0f;
+  }
+
+ private:
+  const UnitCalib *nom_{nullptr};
+  PlantVariant v_;
+  std::mt19937 rng_;
+  std::normal_distribution<float> gauss_{0.0f, 1.0f};
+  std::uniform_real_distribution<float> uni_{0.0f, 1.0f};
+  float xs_{50.0f};
+  Fault fault_{Fault::NONE};
+  float stuck_val_{0.0f};
+  bool frozen_{false};
+  float frozen_val_{0.0f};
 };
 
 }  // namespace slider_sil

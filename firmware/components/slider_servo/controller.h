@@ -24,7 +24,13 @@ enum class State : uint8_t {
   CRAWL = 5,
   RELEASED = 6,
   GLIDE = 7,  // continuous keep-rolling kick train (glide-mode-spec.md)
+  IDENT = 8,  // L6 Ident owns the motor (kueche-mief-spec §3); output 0 here,
+              // set_target rejected with CmdStatus::REJECTED_IDENT
 };
+
+// Result of the last CMD set_target (kueche-mief-spec §3: "set_target wird
+// nicht ausgeführt, sondern mit Status ident_läuft abgelehnt").
+enum class CmdStatus : uint8_t { ACCEPTED = 0, REJECTED_IDENT = 1 };
 
 enum class ReleaseReason : uint8_t {
   NONE = 0, GRAB = 1, INTERLOCK = 2, WATCHDOG = 3, FAULT = 4, COMMAND = 5,
@@ -62,6 +68,11 @@ class Controller {
   void release(ReleaseReason reason);
   // L1 reports its clamp each tick (row 18: persistent -> RELEASED).
   void notify_interlock(bool clamped);
+  // L6 Ident ownership (kueche-mief-spec §3 rows 1/31). enter_ident() only from
+  // IDLE (the Servo checks row 1's guard); exit_ident() returns to IDLE with
+  // hold := p_hat and zero torque — no motion is ever resumed.
+  void enter_ident();
+  void exit_ident(float p_hat);
 
   // One 1 kHz evaluation. Returns the commanded duty (pre-L1).
   float tick(float p_hat, float v_hat);
@@ -71,6 +82,9 @@ class Controller {
   SettleFlag settle_flag() const { return settle_flag_; }
   const ControllerLog &log() const { return log_; }
   bool settled() const { return state_ == State::IDLE && has_hold_; }
+  CmdStatus last_cmd_status() const { return cmd_status_; }
+  // R8 status flag ("nicht identifiziert"), refreshed every tick (K8).
+  bool unidentified_flag() const { return unid_flag_; }
   float hold() const { return hold_; }
   float target() const { return target_; }
   // exposed for the SIL trace (T2, T3 checks)
@@ -78,6 +92,25 @@ class Controller {
   float last_ff() const { return last_ff_; }
 
  private:
+  // R7 (kueche-mief-spec §2): effective per-unit values. derived == false ->
+  // the ServoConfig constants, bit-for-bit the pre-R7 behaviour.
+  float impulse_duty_eff() const {
+    return calib_->derived ? calib_->impulse_duty : cfg_->impulse_duty;
+  }
+  float u_max_eff() const { return calib_->derived ? calib_->u_max : cfg_->u_max; }
+  float v_min_eff() const {
+    return calib_->derived ? calib_->v_min_cmd : cfg_->v_min_cmd;
+  }
+  // CRAWL/GLIDE kick duty: the table is measured at impulse_duty, so in derived
+  // mode the kick never exceeds it (K7); a lower wrapper knob still wins.
+  float crawl_duty_eff() const {
+    if (!calib_->derived) return cfg_->crawl_impulse_duty;
+    return cfg_->crawl_impulse_duty < calib_->impulse_duty ? cfg_->crawl_impulse_duty
+                                                           : calib_->impulse_duty;
+  }
+
+  bool unid() const { return !calib_->identified; }  // R8 throttled mode
+
   float tick_idle(float p_hat);
   float tick_released(float p_hat, float v_hat);
   float tick_move(float p_hat, float v_hat);
@@ -173,6 +206,11 @@ class Controller {
   // RELEASED
   int still_ticks_{0};
   int adopt_ticks_{0};
+
+  // R8 / L6
+  CmdStatus cmd_status_{CmdStatus::ACCEPTED};
+  bool unid_flag_{false};
+  bool had_settle_{false};   // only read by seeded bug K8
 
   // interlock persistence (row 18) and watchdog (row 19)
   int ilk_ticks_{0};

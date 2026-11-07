@@ -17,7 +17,9 @@ set(CORE ${CMAKE_CURRENT_SOURCE_DIR}/../firmware/components/slider_servo)
 
 add_executable(sim_runner
   sim_runner.cpp
+  ident_mode.cpp
   ${CORE}/controller.cpp
+  ${CORE}/ident.cpp
 )
 target_compile_definitions(sim_runner PRIVATE SLIDER_SIL_BUGS)
 target_compile_options(sim_runner PRIVATE -Wall -Wextra)
@@ -26,6 +28,8 @@ target_compile_options(sim_runner PRIVATE -Wall -Wextra)
 # doubles as the acceptance-run binary
 add_executable(sim_runner_prod
   sim_runner.cpp
+  ident_mode.cpp
   ${CORE}/controller.cpp
+  ${CORE}/ident.cpp
 )
 target_compile_options(sim_runner_prod PRIVATE -Wall -Wextra)

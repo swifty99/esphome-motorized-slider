@@ -68,6 +68,35 @@ struct UnitCalib {
   // targets clamp into this span in L4/L5; no L1 positional torque clamp)
   float span_lo = 4.0f;   // %
   float span_hi = 96.0f;  // %
+
+  // --- kueche-mief-spec §5 / R6–R8 (filled by Ident L6; defaults = rig) ---
+  // R6: duty sign -> position direction. +1: positive motor duty raises the
+  // calibrated position. Servo::tick_raw() multiplies the core's output by it;
+  // Servo::tick(z_pct) (legacy % path) never reads it.
+  int8_t dir_sign = 1;
+  // endpoint calibration in raw ADC counts (rig: 8000 @ 0 %, 100 @ 100 %, the
+  // SensorSim / plant-model constants). Used by Servo::tick_raw() only.
+  float raw_at_0 = 8000.0f;
+  float raw_at_100 = 100.0f;
+  // R7 per-unit derivations. Read by the controller ONLY when derived == true;
+  // otherwise ServoConfig's impulse_duty / u_max / v_min_cmd apply (the old
+  // constants — SIL byte-identical, pattern of commit e28f965).
+  bool derived = false;
+  float impulse_duty = 0.8f;   // R7a clamp(F_s_p95 + 0.10, 0.60, 0.95)
+  float u_max = 0.9f;          // R7b clamp(F_s_p95 + 0.15, impulse_duty, 1.0)
+  float v_min_cmd = 120.0f;    // R7c from the measured flight law (Ident I7)
+  // R8: false = no valid NVS ident -> throttled mode (impulse path only, no
+  // MOVE cruise, small widths, status flag every tick). Default false because
+  // a fresh unit IS unidentified; the SIL runner sets it explicitly to true
+  // for the legacy suite (the nominal map is the rig's identified snapshot).
+  bool identified = false;
+  // Ident by-products the core does not consume (stored for the report /
+  // plantreport cross-check, §5): per-direction kinetic level + damping.
+  float fk_mid_fwd = 0.55f;
+  float fk_mid_rev = 0.55f;
+  float b_fwd = 5.47e-04f;
+  float b_rev = 5.47e-04f;
+  float spike_rate = 0.0f;     // fraction of PWM ticks beyond 5 sigma0 (I6)
 };
 
 // ---------------------------------------------------------------------------
@@ -206,14 +235,35 @@ struct ServoConfig {
                                   // judder — gate Q3). 0 => crawl_land_zone/
                                   // endgame_zone. Stage 2 adds the learned coast.
 
+  // R8 unidentified mode (kueche-mief-spec §2 R8: "nur Endgame-/Impuls-Pfad mit
+  // kleinen Breiten, kein MOVE-Cruise"). Active iff UnitCalib::identified ==
+  // false. Every move — any distance, any speed request — runs the endgame
+  // pulse path (rows 2/14/15) with widths capped; rows 3/13/26 (MOVE / CRAWL /
+  // GLIDE entry) are suppressed.
+  float unid_max_width_ms = 10.0f;  // "kleine Breiten": nominal table 10 ms =
+                                    // 2.6 % (< endgame_zone 3.5 %); on a
+                                    // breakaway-0.43 unit ~3x that, still a
+                                    // bounded hop the endgame re-measures
+  int unid_impulse_max = 60;        // pulse budget (row 11) in unidentified mode:
+                                    // a 0->100 % move at ~2 % per capped pulse
+                                    // needs ~50; bounded so T9 still holds
+  float unid_rate = 8.0f;           // %/s watchdog pacing (row 19) for the pulse
+                                    // path: 10 ms pulse 2.6 % per 130 ms ~ 20 %/s
+                                    // nominal, /2.5 margin for slower units
+
   // watchdog (row 19): 2 x expected move time + 1 s; expected includes endgame
   float watchdog_endgame_s = 1.5f;
 
-  // L1 safety (basis: lab-rig interlocks, L9110 ~800 mA cont.; Gate answer 8:
-  // thermal + budget are the ONLY current protection, no positional clamp)
-  float thermal_tau_s = 10.0f;    // EMA time constant over |duty|
-  float thermal_avg_max = 0.5f;   // trip level (lab-rig value)
-  float thermal_resume = 0.35f;   // hysteresis: resume below this
+  // L1 safety (Gate answer 8: thermal + budget are the ONLY current protection,
+  // no positional clamp). Source: Jan 2026-11-07, "5 min Vollgas unkritisch" —
+  // the old lab-rig values (tau 10 s, trip 0.5, resume 0.35) tripped after ~7 s
+  // of full duty, which is unrealistically sharp. New: at |duty| = 1.0 the EMA
+  // reaches the trip after -tau*ln(1 - 0.95) = 120 * 3.0 ~= 360 s (~6 min),
+  // i.e. 5 min of uninterrupted full duty never trips; resume after cooling
+  // below 0.60. Tripwire: test_thermal.py.
+  float thermal_tau_s = 120.0f;   // EMA time constant over |duty| (Jan 2026-11-07, 5 min Vollgas unkritisch)
+  float thermal_avg_max = 0.95f;  // trip level (Jan 2026-11-07, 5 min Vollgas unkritisch)
+  float thermal_resume = 0.60f;   // hysteresis: resume below this (Jan 2026-11-07, 5 min Vollgas unkritisch)
   int ilk_yield_ms = 250;         // persistent clamp -> RELEASED (row 18)
 
   // observer (observer.py ObserverConfig; model_err 0.14 duty = SIL value)
@@ -222,6 +272,161 @@ struct ServoConfig {
   float obs_gate_sigma = 5.0f;
   int obs_gate_max_consecutive = 8;
   float obs_v_stick = 3.0f;       // %/s stuck threshold in the process model
+};
+
+// ---------------------------------------------------------------------------
+// L6 Ident (kueche-mief-spec §3, rows 1–32). Every constant cites its §3 row
+// or, where §3 is silent, the reason (deviations: docs/findings/
+// ident-sil-2026-11-07.md §Abweichungen). Times in ms, positions in %.
+// ---------------------------------------------------------------------------
+
+inline constexpr int IDENT_PROBE_WIDTHS = 4;
+inline constexpr int IDENT_POSITIONS = 7;
+inline constexpr int IDENT_REPS = 2;
+inline constexpr int IDENT_IMP_WIDTHS = 6;
+inline constexpr int IDENT_PHASES = 10;  // I0..I9
+
+struct IdentConfig {
+  // --- identity + priors supplied by the wrapper (YAML), never learned ---
+  uint16_t fw_major = 1;        // stamp (§5): invalid on major mismatch
+  uint8_t instance = 0;         // stamp (§5): R1 instance index
+  // prior pot scale = the legacy calibrate_linear endpoints. Its ORIENTATION
+  // is semantics (which physical end the user calls 0 %), the only pot fact
+  // the device cannot learn; the magnitudes are only a first estimate for
+  // I2/row 6 and are replaced by the I3 rail medians.
+  float raw_hint_at_0 = 8000.0f;   // rig
+  float raw_hint_at_100 = 100.0f;  // rig
+  int8_t dir_sign_hint = 1;     // R6: invert_direction = I2 start value only
+  float adc_full_scale = 8191.0f;  // 13-bit ADC1 (row 3 "an Schiene")
+  float supply_lo = -1.0f;      // row 3 supply window [V]; lo >= hi = unchecked
+  float supply_hi = -1.0f;
+
+  // --- I1 PREFLIGHT (rows 3/4) ---
+  int preflight_ms = 500;           // row 3 "σ-Probe 0,5 s"
+  float adc_flat_max = 16.0f;       // counts: median at/below = "flach 0" (rig ADC
+                                    // incident read exactly 0; real wiper >= ~100)
+  float adc_rail_margin = 16.0f;    // counts below full scale = "an Schiene"
+  float sigma_min_counts = 0.5f;    // MAD*1.48 below = stuck converter (rig sigma0 8.5)
+  float sigma_max_counts = 150.0f;  // above = broken wiper (~2 % at 79 counts/%; rig x17)
+  float thermal_preflight_max = 0.60f;  // row 3 (changed 2026-11-07): not tripped
+                                        // and EMA < resume threshold
+
+  // --- I2 POLARITY (rows 5–8) ---
+  float probe_duty = 0.8f;          // row 5
+  float probe_widths_ms[IDENT_PROBE_WIDTHS] = {5, 10, 20, 40};  // row 5
+  int probe_rest_ms = 300;          // row 5
+  float probe_motion_pct = 1.0f;    // row 5 (median of 8 samples)
+  int probe_passes = 2;             // row 8 "Wiederholung x 2"
+  float mid_lo = 15.0f;             // rows 5/6
+  float mid_hi = 85.0f;
+
+  // --- I3 ENDPOINTS (rows 9–12) ---
+  float train_duty = 0.8f;          // row 9
+  int train_width_ms = 20;          // row 9
+  int train_period_ms = 150;        // row 9
+  float train_min_progress_pct = 0.3f;  // row 9
+  int train_stall_pulses = 3;       // row 9
+  float rail_confirm_duty = 1.0f;   // deviation D3: a 0.8 stall is re-tried at
+                                    // full duty before it counts as the rail
+                                    // (high-breakaway units stop short at 0.8;
+                                    // E3 / policy (a): 100 % at the rail is ok)
+  int rail_rest_ms = 500;           // row 10
+  int rail_median_ticks = 200;      // row 10
+  float min_span_counts = 4000.0f;  // row 11
+  float span_margin_pct = 4.0f;     // usable span [4, 96] % (= nominal dead band;
+                                    // §3 gives no method for the dead band)
+
+  // --- I4 QUIET (row 13) ---
+  int quiet_ms = 2000;              // row 13
+  int decimate = 4;                 // every 4th tick into the 512-sample MAD buffer
+
+  // --- I5 BRACKET (rows 14–17) ---
+  float bracket_start = 0.15f;      // row 14
+  float bracket_step = 0.05f;       // row 14
+  float bracket_fine = 0.03f;       // row 14 "Feinschritt 0,03 abwärts-bestätigt"
+  float bracket_max = 0.95f;        // row 16
+  int hold_ms = 300;                // row 14
+  float bracket_motion_pct = 5.0f;  // row 14 (median of 8; principle 1)
+  float quiet_band_pct = 1.0f;      // row 15 "letzter ruhiger Tick": within 1 %
+  float bracket_adapt_margin = 0.10f;  // "adaptiv" (D5): later points start at
+                                       // min(F_s so far) - 0.10 on the 0.05 grid,
+                                       // never below bracket_start (120 s budget)
+  float positions_pct[IDENT_POSITIONS] = {15, 26, 38, 50, 62, 74, 85};  // row 14
+  int sustain_ms = 50;              // row 15 "Sustain-Bit nach 50 ms"
+  float sustain_pct = 3.0f;         // auto-ident #5 "sustained >= 3 %"
+  float fs_p95_lo = 0.25f;          // row 17
+  float fs_p95_hi = 0.92f;          // row 17
+
+  // --- R7 derivations (kueche-mief-spec §2 R7) ---
+  float impulse_margin = 0.10f;     // R7a
+  float impulse_lo = 0.60f;
+  float impulse_hi = 0.95f;
+  float umax_margin = 0.15f;        // R7b; lower clamp = impulse_duty (D7)
+  float umax_hi = 1.0f;
+  float vmin_margin = 1.15f;        // R7c: rig 120 %/s over the 104 %/s flight floor
+  float vmin_lo = 80.0f;            // R7c floor: below the rig's measured 104 %/s
+
+  // --- I6 STALL (row 18) ---
+  int stall_ms = 2000;              // row 18
+  float stall_floor = 0.10f;        // row 18
+  float stall_below_fs = 0.10f;     // row 18
+  float spike_sigma = 5.0f;         // row 18 ">5σ-Ticks"
+
+  // --- I7 FLIGHTS (rows 19–21) ---
+  float flight_d1 = 0.12f;          // row 19
+  float flight_d2 = 0.20f;          // row 19
+  float flight_max = 1.0f;          // D8: duties clamp at full scale ...
+  float flight_min_gap = 0.06f;     // ... keeping a solvable 2x2 gap
+  float flight_from = 25.0f;        // row 19
+  float flight_to = 75.0f;
+  int flight_slope_ms = 40;         // row 19 "letzte 40 ms"
+  int flight_timeout_ms = 1500;     // a flight that never arrives -> v ~ 0 -> row 21
+  int flight_reps = 2;              // row 20 "4 Flüge pro Richtung" = 2 duties x 2
+
+  // --- I8 IMPULSES (rows 22–24) ---
+  float imp_widths_ms[IDENT_IMP_WIDTHS] = {3, 5, 10, 20, 30, 50};  // row 22
+  int imp_reps = 2;                 // row 22 ">= 2 Wdh."
+  int imp_settle_ms = 300;          // post-pulse rest before the travel reading
+                                    // (sim coast <= 60 ms; HIL creep, spec §6 d)
+  float imp_start_fwd = 20.0f;      // D9: groups start mid-range and re-centre
+  float imp_start_rev = 80.0f;      //     before a pulse could reach the guard
+  float imp_guard_lo = 5.0f;
+  float imp_guard_hi = 95.0f;
+  float imp_predict = 1.5f;         // next travel ~ last * (w/w_last) * 1.5 + 1 %
+  float imp_preload_pct = 4.0f;     // D9b: start approached from 4 % behind, so the
+                                    // last repositioning pulse runs in the table
+                                    // direction (takes up <= 2 % backlash, 2x tol)
+
+  // --- repositioning (rows 14/22 "per Impulsen") ---
+  float repo_tol_pct = 2.0f;        // bracket/flight start accuracy
+  float repo_duty = 0.8f;           // = rows 5/9 duty ...
+  float repo_escalate = 0.05f;      // ... +0.05 per zero-travel pulse, cap 1.0
+  float repo_aim = 0.6f;            // aim 60 % of the gap (pulse travel superlinear)
+  float repo_w_min_ms = 2.0f;       // = pulse_min_ms
+  float repo_w_max_ms = 40.0f;      // <= row-5 probe maximum
+  int repo_settle_ms = 150;         // = row 9 train period
+  int pre_hold_settle_ms = 100;     // rest before a hold / flight reference (the
+                                    // repositioning already waited repo_settle_ms;
+                                    // this only refills the median-of-8)
+  float repo_gain0 = 0.3f;          // %/ms first guess (rig: 6.2 % per 20 ms)
+
+  // --- generic rows 27/29/30/32 ---
+  float hand_pct = 3.0f;            // row 27
+  int hand_win_ms = 100;            // row 27
+  int hand_guard_ms = 60;           // coast exclusion after any pulse (sim coast
+                                    // stops in <= 3 tau = 66 ms; rig creep 1.3 %
+                                    // / 400 ms stays below 3 %)
+  float supply_dev = 0.15f;         // row 30
+  float adc_err_rate_max = 0.10f;   // row 32: EMA(100 ticks) of the error flag
+  int adc_err_window_ticks = 100;   // row 32: EMA horizon of the error flag
+  int hand_min_win_ms = 10;         // row 27: shortest usable comparison window
+                                    // (>= one median-of-8 length + margin)
+  float repo_gain_ema = 0.5f;       // repositioning: weight of the newest
+                                    // travel/width sample (fast but damped)
+  // row 29: expected phase time [s]; watchdog = 2 x expected + 1 s. Values are
+  // worst cases over the SIL plant family (findings doc), not nominal times.
+  float phase_expected_s[IDENT_PHASES] = {0.0f, 0.5f, 3.0f, 30.0f, 2.0f,
+                                          100.0f, 2.0f, 30.0f, 40.0f, 0.0f};
 };
 
 }  // namespace slider_servo

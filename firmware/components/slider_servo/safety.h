@@ -25,8 +25,21 @@ class Safety {
   }
 
   void set_abort(bool on) { abort_ = on; }
+  // Restore a (conservative) thermal state, e.g. after an unexpected reset the
+  // wrapper may assume the motor is still warm. Never lowers the budget's
+  // protection; also used by the SIL for the Ident row-4 'thermal' FAIL.
+  void preload_thermal(float ema) { ema_ = ema > ema_ ? ema : ema_; }
   bool clamped() const { return clamped_; }
   float thermal_avg() const { return ema_; }
+  bool tripped() const { return tripped_; }
+  // Would clamp() cut THIS tick (same hysteresis update, no side effects)?
+  // L6 Ident reads it before computing its duty (row 28, same-tick supremacy).
+  bool will_cut() const {
+    bool t = tripped_;
+    if (t && ema_ < cfg_->thermal_resume) t = false;
+    if (!t && ema_ > cfg_->thermal_avg_max) t = true;
+    return abort_ || t;
+  }
 
   // Same-tick clamp (T14). Returns the applied duty.
   float clamp(float u_cmd) {
