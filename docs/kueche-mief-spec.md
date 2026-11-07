@@ -148,7 +148,7 @@ Trigger: `CMD` (Button), `TICK`, `OBS`, `ILK` (L1), `TIME`. Nicht aufgeführte
 |---|---|---|---|---|---|
 | 1 | I0 | CMD Ident | Controller IDLE, keine andere Instanz Drehmoment ≠ 0 | I1 | Instanz sperrt Arbiter; Status `ident(preflight)` |
 | 2 | I0 | CMD Ident | sonst (Instanz aktiv, RELEASED, Fault) | I0 | Ablehnung mit Grund im Status |
-| 3 | I1 | TICK Preflight ok | ADC nicht flach 0 / nicht an Schiene, σ-Probe 0,5 s plausibel, Thermal-EMA < 0,1, Versorgungs-ADC (wenn vorhanden) im Fenster | I2 | VM-Wert stempeln |
+| 3 | I1 | TICK Preflight ok | ADC nicht flach 0 / nicht an Schiene, σ-Probe 0,5 s plausibel, L1 nicht getrippt und Thermal-EMA < 0,60 (Resume-Schwelle; geändert 2026-11-07, vorher < 0,1), Versorgungs-ADC (wenn vorhanden) im Fenster | I2 | VM-Wert stempeln |
 | 4 | I1 | TICK Preflight fail | — | FAIL | reason ∈ `adc_flat`, `adc_rail`, `thermal`, `supply` |
 | 5 | I2 | TICK | Position 15–85 % | I2 | Probe-Impulse 0,8 × {5, 10, 20, 40} ms, Duty-Vorzeichen +, jeweils 300 ms Ruhe; Bewegung ≥ 1 % (Median über 8 Samples) beendet die Probe |
 | 6 | I2 | TICK Position < 15 % oder > 85 % | — | I2 | erste Probe in Richtung Mitte (geschätzt über Poti-Skala), `dir_sign` danach aus beobachteter Richtung |
@@ -180,10 +180,13 @@ Trigger: `CMD` (Button), `TICK`, `OBS`, `ILK` (L1), `TIME`. Nicht aufgeführte
 | 32 | beliebig | OBS Fault (NaN, ADC-Fehlerrate) | — | ABORT | reason=`fault` |
 
 **Budget:** ≤ 120 s inkl. Pausen und Repositionierungen (Rig-Schätzung 75 s,
-dazu Polarität/Endpunkte und der breitere Bracket). 30-s-Pausen-Regel der
-Bench gilt zwischen **Läufen**, nicht innerhalb; Thermal-EMA bleibt über den
-L1-Interlock gedeckelt. Schienenfahrten sind erlaubt (E3, Endzonen-Policy (a):
-100 % Duty für 10 s ist ok).
+dazu Polarität/Endpunkte und der breitere Bracket). Thermal-EMA bleibt über den
+L1-Interlock gedeckelt. Schienenfahrten sind erlaubt (E3, Endzonen-Policy (a)).
+**Änderung 2026-11-07 (Jan):** „Hardware verträgt 5 min Vollgas, nichts brennt
+ab" → L1-Thermal realistisch: `thermal_tau_s` 120 s, Trip bei EMA 0,95, Resume
+unter 0,60 (Trip erst nach ≈ 6 min ununterbrochenem Vollgas, −τ·ln 0,05 ≈ 360 s;
+vorher τ 10 s / 0,5 / 0,35 = Trip nach ≈ 7 s). Die 30-s-Pausen-Regel zwischen
+Ident-Läufen entfällt damit.
 
 ## 4. Tripwires (jeder: SIL-Assertion + Negativ-Kontrolle)
 
@@ -255,6 +258,9 @@ Dunst-/Bewässerungslogik für die Testzeit akzeptiert (§9 Q2).
   fängt ihn vor jeder Fahrt; Fehlerzähler läuft als Diagnose-Sensor.
 - **Motor-Wear:** Ident ist ~25 Moves + Anschläge; kein Dauerlauf, Thermal-EMA
   im Bericht.
+- **Thermal (geändert 2026-11-07, Jan):** L1-Trip erst nach ≈ 6 min Vollgas
+  (τ 120 s, Trip 0,95, Resume 0,60); 5 min Vollgas sind laut Jan unkritisch.
+  Der Schutz existiert weiter (SIL-Tripwire: 300 s Duty 1,0 kein Trip, 480 s Trip).
 - **Dunst-Konsumenten folgen dem fahrenden Slider 2** (R3): gewollt, aber bei
   Tests Lüfter-Ruck einplanen.
 

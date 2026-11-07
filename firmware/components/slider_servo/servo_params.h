@@ -209,11 +209,16 @@ struct ServoConfig {
   // watchdog (row 19): 2 x expected move time + 1 s; expected includes endgame
   float watchdog_endgame_s = 1.5f;
 
-  // L1 safety (basis: lab-rig interlocks, L9110 ~800 mA cont.; Gate answer 8:
-  // thermal + budget are the ONLY current protection, no positional clamp)
-  float thermal_tau_s = 10.0f;    // EMA time constant over |duty|
-  float thermal_avg_max = 0.5f;   // trip level (lab-rig value)
-  float thermal_resume = 0.35f;   // hysteresis: resume below this
+  // L1 safety (Gate answer 8: thermal + budget are the ONLY current protection,
+  // no positional clamp). Source: Jan 2026-11-07, "5 min Vollgas unkritisch" —
+  // the old lab-rig values (tau 10 s, trip 0.5, resume 0.35) tripped after ~7 s
+  // of full duty, which is unrealistically sharp. New: at |duty| = 1.0 the EMA
+  // reaches the trip after -tau*ln(1 - 0.95) = 120 * 3.0 ~= 360 s (~6 min),
+  // i.e. 5 min of uninterrupted full duty never trips; resume after cooling
+  // below 0.60. Tripwire: test_thermal.py.
+  float thermal_tau_s = 120.0f;   // EMA time constant over |duty| (Jan 2026-11-07, 5 min Vollgas unkritisch)
+  float thermal_avg_max = 0.95f;  // trip level (Jan 2026-11-07, 5 min Vollgas unkritisch)
+  float thermal_resume = 0.60f;   // hysteresis: resume below this (Jan 2026-11-07, 5 min Vollgas unkritisch)
   int ilk_yield_ms = 250;         // persistent clamp -> RELEASED (row 18)
 
   // observer (observer.py ObserverConfig; model_err 0.14 duty = SIL value)

@@ -27,6 +27,7 @@ class Safety {
   void set_abort(bool on) { abort_ = on; }
   bool clamped() const { return clamped_; }
   float thermal_avg() const { return ema_; }
+  bool tripped() const { return tripped_; }
 
   // Same-tick clamp (T14). Returns the applied duty.
   float clamp(float u_cmd) {

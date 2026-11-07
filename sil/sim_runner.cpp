@@ -142,6 +142,8 @@ int main(int argc, char **argv) {
   int bug = 0;
   int recorder_override = -1;
   long seed_override = -1;
+  float thermal_s = 0.0f, thermal_duty = 0.0f;
+  bool thermal_old = false;
   for (int i = 1; i < argc; i++) {
     if (!std::strcmp(argv[i], "--out") && i + 1 < argc) out_path = argv[++i];
     else if (!std::strcmp(argv[i], "--bug") && i + 1 < argc) bug = std::atoi(argv[++i]);
@@ -149,7 +151,32 @@ int main(int argc, char **argv) {
       recorder_override = std::atoi(argv[++i]);
     else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc)
       seed_override = std::atol(argv[++i]);
+    else if (!std::strcmp(argv[i], "--thermal") && i + 2 < argc) {
+      thermal_s = static_cast<float>(std::atof(argv[++i]));
+      thermal_duty = static_cast<float>(std::atof(argv[++i]));
+    } else if (!std::strcmp(argv[i], "--thermal-old")) thermal_old = true;
     else scenario_path = argv[i];
+  }
+  if (thermal_s > 0.0f) {
+    // L1 thermal tripwire (Jan 2026-11-07): drive Safety alone with a constant
+    // commanded duty and report the first trip tick. --thermal-old restores the
+    // pre-2026-11-07 lab-rig values (the negative control).
+    ServoConfig tcfg;
+    if (thermal_old) {
+      tcfg.thermal_tau_s = 10.0f;
+      tcfg.thermal_avg_max = 0.5f;
+      tcfg.thermal_resume = 0.35f;
+    }
+    Safety s;
+    s.init(&tcfg);
+    const long n = static_cast<long>(thermal_s * 1000.0f);
+    long trip = -1;
+    for (long i = 0; i < n; i++) {
+      s.clamp(thermal_duty);
+      if (s.tripped() && trip < 0) trip = i;
+    }
+    std::printf("thermal_trip_tick=%ld\nthermal_ema=%.4f\n", trip, s.thermal_avg());
+    return 0;
   }
   if (!scenario_path) {
     std::fprintf(stderr,
