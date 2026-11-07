@@ -261,7 +261,7 @@ float Ident::buf_mad_sigma(float med) {
   }
   int16_t *mid = buf_ + buf_n_ / 2;
   std::nth_element(buf_, mid, buf_ + buf_n_);
-  return static_cast<float>(*mid) * 0.25f * 1.4826f;
+  return static_cast<float>(*mid) * 0.25f * 1.4826f;  // MAD -> sigma (gaussian)
 }
 
 // ------------------------------------------------------------ pulse engine --
@@ -301,7 +301,7 @@ bool Ident::repo_step(float *duty) {
     } else {
       const int di = repo_dir_prev_ > 0 ? 0 : 1;
       const float g = travel / static_cast<float>(repo_w_prev_);
-      repo_gain_[di] = 0.5f * repo_gain_[di] + 0.5f * g;
+      repo_gain_[di] += ic.repo_gain_ema * (g - repo_gain_[di]);
     }
     repo_prev_ = false;
   }
@@ -348,7 +348,7 @@ float Ident::tick(const IdentInputs &in) {
   // row 32: NaN or a persistent ADC error rate -> ABORT(fault)
   const bool finite = std::isfinite(in.raw);
   const float err_now = (in.adc_err || !finite) ? 1.0f : 0.0f;
-  err_ema_ += (err_now - err_ema_) * 0.01f;  // ~100-tick window
+  err_ema_ += (err_now - err_ema_) / static_cast<float>(ic.adc_err_window_ticks);
   if (!finite || err_ema_ > ic.adc_err_rate_max) {
     do_abort(IdentReason::FAULT);
     last_out_ = 0.0f;
@@ -394,7 +394,7 @@ float Ident::tick(const IdentInputs &in) {
     if (!SIL_BUG(bug_, K5_NO_HAND) && zero_ticks_ > ic.hand_guard_ms) {
       int w = zero_ticks_ - ic.hand_guard_ms;
       if (w > ic.hand_win_ms) w = ic.hand_win_ms;
-      if (w >= 10) {
+      if (w >= ic.hand_min_win_ms) {
         const float moved = std::fabs(to_pct(raw_med_) - to_pct(hist_ago(w)));
         if (moved > ic.hand_pct) {
           do_abort(IdentReason::HAND);
@@ -811,7 +811,7 @@ float Ident::tick_stall() {
                       ? 0.45f
                       : std::max(ic.stall_floor, d.fs_min - ic.stall_below_fs);  // row 18
     d.stall_duty = stall_duty_;
-    probe_sign_ = p_med_ < 50.0f ? 1.0f : -1.0f;  // toward the middle
+    probe_sign_ = p_med_ < 50.0f ? 1.0f : -1.0f;  // toward mid-span (geometry)
     stall_ref_ = raw_med_;
     buf_reset();
     dec_ = 0;

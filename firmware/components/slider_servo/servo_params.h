@@ -418,6 +418,11 @@ struct IdentConfig {
                                     // / 400 ms stays below 3 %)
   float supply_dev = 0.15f;         // row 30
   float adc_err_rate_max = 0.10f;   // row 32: EMA(100 ticks) of the error flag
+  int adc_err_window_ticks = 100;   // row 32: EMA horizon of the error flag
+  int hand_min_win_ms = 10;         // row 27: shortest usable comparison window
+                                    // (>= one median-of-8 length + margin)
+  float repo_gain_ema = 0.5f;       // repositioning: weight of the newest
+                                    // travel/width sample (fast but damped)
   // row 29: expected phase time [s]; watchdog = 2 x expected + 1 s. Values are
   // worst cases over the SIL plant family (findings doc), not nominal times.
   float phase_expected_s[IDENT_PHASES] = {0.0f, 0.5f, 3.0f, 30.0f, 2.0f,
