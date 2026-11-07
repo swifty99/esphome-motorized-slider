@@ -24,7 +24,7 @@
 //   on <PHASE>[#n] <delay> <event...>   PHASE in I1..I9 DONE FAILED ABORTED END
 // Events: ident | abort_ident | target <pct> [speed <v>] | release |
 //   abort on|off | grab <s> | drag_rel <dx> <s> | step <dx> | supply <s> |
-//   friction <k> | adc flat|rail|ok|stuck <raw> | nan
+//   friction <k> | adc flat|rail|ok|stuck <raw> | nan | supply_read on|off|zero|nan
 
 #include <algorithm>
 #include <cmath>
@@ -309,6 +309,7 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
   int drag_until = -1, drag_start = 0;
   float drag_from = 0.0f, drag_to = 0.0f;
   bool nan_next = false;
+  int supply_mode = 0;  // 0 live, 1 unknown (-1), 2 reads 0 V, 3 NaN
   float u_motor = 0.0f;
   IdentState prev_is = servo.ident_state();
   State prev_cs = servo.controller().state();
@@ -367,6 +368,9 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
         else if (m == "rail") sensor.set_fault(RawSensor::Fault::RAIL);
         else if (m == "stuck") sensor.set_fault(RawSensor::Fault::STUCK, static_cast<float>(arg(2)));
         else sensor.set_fault(RawSensor::Fault::NONE);
+      } else if (k == "supply_read") {  // D24: what the supply sensor reports
+        const std::string m = e.args.size() > 1 ? e.args[1] : "on";
+        supply_mode = m == "off" ? 1 : (m == "zero" ? 2 : (m == "nan" ? 3 : 0));
       } else if (k == "heat") {
         servo.preload_thermal(static_cast<float>(arg(1)));
       } else if (k == "nan") {
@@ -381,7 +385,10 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
         prev_is = is0;
       }
     }
-    const float supply_v = sc.supply_nom > 0.0f ? sc.supply_nom * supply_scale : -1.0f;
+    float supply_v = sc.supply_nom > 0.0f ? sc.supply_nom * supply_scale : -1.0f;
+    if (sc.supply_nom > 0.0f && supply_mode == 1) supply_v = -1.0f;
+    if (sc.supply_nom > 0.0f && supply_mode == 2) supply_v = 0.0f;
+    if (sc.supply_nom > 0.0f && supply_mode == 3) supply_v = std::nanf("");
     float raw = sensor.sample_raw(plant.p(), u_motor);
     if (nan_next) {
       raw = std::nanf("");

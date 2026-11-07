@@ -694,3 +694,45 @@ def test_d23_hand_during_escape_aborts(tmp_path):
     s, _ = run_ident(tmp_path, sc, tag="rs_hand")
     assert s["run1_outcome"] == "aborted" and s["run1_reason"] == "hand"
     assert s["nvs_writes"] == 0 and s["run1_post_u_max"] == 0.0
+
+
+# ------------------------------------------- D24: supply reference (row 30)
+# Field 2026-11-07: ABORT(supply) right after boot. The old stamp was the MEAN
+# of every reading >= 0 — a boot transient (sensor reads 0 V, or no state yet)
+# dragged it to 13 V, the real 22 V then counted as a >15 % deviation. Now:
+# unknown (<= 0.5 V / -1 / NaN) never aborts, the stamp is the median of valid
+# readings, a missing stamp is adopted from the first valid stretch, and a
+# REAL deviation after a known stamp still aborts. Negative control: bug 30.
+
+KS_SUPPLY_OLD = 30
+SUP_CASES = {
+    # name: (events, expected outcome, outcome under the old code)
+    "boot_zero_transient": ("at 0.0 supply_read zero\nat 0.3 supply_read on\n",
+                            "ok", "aborted"),
+    "late_reference_then_real_drop": ("at 0.0 supply_read off\non I2 1.0 supply_read on\n"
+                                      "on I5 3 supply 0.8\n", "aborted", "ok"),
+    "unknown_later_never_aborts": ("on I5 3 supply_read off\non I6 0 supply_read nan\n"
+                                   "on I7 0 supply_read zero\non I8 0 supply_read on\n",
+                                   "ok", "aborted"),
+}
+
+
+@pytest.mark.parametrize("name", list(SUP_CASES))
+def test_d24_supply_reference(tmp_path, name):
+    events, want, old = SUP_CASES[name]
+    sc = sc_ident("supply_adc 22.0", seed=4, extra=events)
+    s, _ = run_ident(tmp_path, sc, tag=f"sup_{name}")
+    assert s["run1_outcome"] == want, f"{name}: {s['run1_outcome']}/{s['run1_reason']}"
+    if want == "aborted":
+        assert s["run1_reason"] == "supply" and s["nvs_writes"] == 0
+    else:
+        assert abs(s["vm"] - 22.0) < 0.01  # the stamp is the real supply
+    sb, _ = run_ident(tmp_path, sc, bug=KS_SUPPLY_OLD, tag=f"supb_{name}")
+    assert sb["run1_outcome"] == old, f"D24 negative control vacuous ({name})"
+
+
+def test_d24_real_deviation_after_known_stamp_aborts(tmp_path):
+    s, _ = run_ident(tmp_path, sc_ident("supply_adc 22.0", seed=4,
+                                        extra="on I5 3 supply 0.8\n"), tag="sup_real")
+    assert s["run1_outcome"] == "aborted" and s["run1_reason"] == "supply"
+    assert s["nvs_writes"] == 0 and s["run1_post_u_max"] == 0.0
