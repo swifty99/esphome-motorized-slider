@@ -18,6 +18,9 @@ every invariant becomes a falsifiable tripwire test before hardware sees the cod
 | [docs/legacy-analysis.md](docs/legacy-analysis.md) | Autopsy of the old component: what it did, why it wasn't smooth, known bugs |
 | [docs/lab-rig-spec.md](docs/lab-rig-spec.md) | Spec of the Phase-1 experiment firmware (`slider_lab`) — the identification instrument |
 | [docs/protocols/measurement-campaign.md](docs/protocols/measurement-campaign.md) | Picoscope + lab-rig measurement protocols M0–M8 |
+| [docs/entwicklungsbericht.md](docs/entwicklungsbericht.md) | **Start hier:** Entwicklungsbericht (wie, warum, Ergebnis), Stand 2026-11-08 |
+| [docs/kueche-mief-spec.md](docs/kueche-mief-spec.md) | Spec Küche Mief: 2 Slider, Soll per HA, Ident auf dem Gerät (freigegeben, umgesetzt) |
+| [docs/findings/kueche-hil-2026-11-07.md](docs/findings/kueche-hil-2026-11-07.md) | Messungen und Befunde am echten Gerät |
 
 ## Layout (grows over time)
 
