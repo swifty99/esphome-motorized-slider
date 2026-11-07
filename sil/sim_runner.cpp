@@ -29,6 +29,8 @@
 using namespace slider_servo;
 using namespace slider_sil;
 
+int run_ident_mode(const char *path, const char *out_path, int bug);  // ident_mode.cpp
+
 namespace {
 
 struct Event {
@@ -147,6 +149,7 @@ int main(int argc, char **argv) {
   long seed_override = -1;
   float thermal_s = 0.0f, thermal_duty = 0.0f;
   bool thermal_old = false;
+  bool ident_mode = false;
   for (int i = 1; i < argc; i++) {
     if (!std::strcmp(argv[i], "--out") && i + 1 < argc) out_path = argv[++i];
     else if (!std::strcmp(argv[i], "--bug") && i + 1 < argc) bug = std::atoi(argv[++i]);
@@ -158,6 +161,7 @@ int main(int argc, char **argv) {
       thermal_s = static_cast<float>(std::atof(argv[++i]));
       thermal_duty = static_cast<float>(std::atof(argv[++i]));
     } else if (!std::strcmp(argv[i], "--thermal-old")) thermal_old = true;
+    else if (!std::strcmp(argv[i], "--ident")) ident_mode = true;
     else scenario_path = argv[i];
   }
   if (thermal_s > 0.0f) {
@@ -184,9 +188,10 @@ int main(int argc, char **argv) {
   if (!scenario_path) {
     std::fprintf(stderr,
                  "usage: sim_runner <scenario> [--out csv] [--bug N] "
-                 "[--recorder N] [--seed N]\n");
+                 "[--recorder N] [--seed N] [--ident] | --thermal <s> <duty>\n");
     return 2;
   }
+  if (ident_mode) return run_ident_mode(scenario_path, out_path, bug);
   Scenario sc;
   if (!parse_scenario(scenario_path, sc)) {
     std::fprintf(stderr, "cannot parse scenario %s\n", scenario_path);
