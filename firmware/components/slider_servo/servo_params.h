@@ -285,6 +285,7 @@ inline constexpr int IDENT_POSITIONS = 7;
 inline constexpr int IDENT_REPS = 2;
 inline constexpr int IDENT_IMP_WIDTHS = 6;
 inline constexpr int IDENT_PHASES = 10;  // I0..I9
+inline constexpr int IDENT_ESCAPE_WIDTHS = 5;
 
 struct IdentConfig {
   // --- identity + priors supplied by the wrapper (YAML), never learned ---
@@ -317,6 +318,14 @@ struct IdentConfig {
   int probe_rest_ms = 300;          // row 5
   float probe_motion_pct = 1.0f;    // row 5 (median of 8 samples)
   int probe_passes = 2;             // row 8 "Wiederholung x 2"
+  // D23 rail start (Küche Slider 2, 2026-11-07): parked inside an ADC clamp
+  // (preflight median at a clamp, sigma <= clip_sigma_max) the unit escapes
+  // first: both signs alternately (hint direction "away" first), widths
+  // escalating; success = the median leaves the clamp band AND moved >=
+  // probe_motion_pct. The escape probe doubles as the polarity probe (row 7).
+  float escape_widths_ms[IDENT_ESCAPE_WIDTHS] = {20, 40, 80, 150, 250};
+  int escape_full_from = 3;         // widths from this index run at escape_duty_max
+  float escape_duty_max = 1.0f;     // E3 / policy (a): full duty at a rail is ok
   float mid_lo = 15.0f;             // rows 5/6
   float mid_hi = 85.0f;
 

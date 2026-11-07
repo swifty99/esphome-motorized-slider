@@ -160,6 +160,8 @@ class Ident {
   // D22 diagnostics of the last run (kept OUT of IdentResult on purpose: the
   // NVS blob layout of already-identified units stays valid)
   bool rail_clipped(int leg) const { return clipped_[leg & 1]; }
+  // D23: +1/-1 = the last run started parked in the upper/lower ADC clamp
+  int rail_start() const { return rail_start_; }
   float clip_entry_raw(int leg) const { return clip_entry_raw_[leg & 1]; }
 
  private:
@@ -276,6 +278,8 @@ class Ident {
   int train_dir_{-1};        // -1 = toward A (0 %), +1 = toward B
   float raw_a_{0.0f}, raw_b_{0.0f}, sig_a_{0.0f}, sig_b_{0.0f};
   bool clipped_[2] = {false, false};
+  int8_t rail_start_{0};
+  int esc_idx_{0}, esc_alt_{0};
   float clip_entry_raw_[2] = {0.0f, 0.0f};
   bool leg_live_seen_{false};    // D22: this train saw unclipped samples
   bool leg_clip_seen_{false};

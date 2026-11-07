@@ -154,6 +154,7 @@ bool Ident::start(bool ok_to_start, const UnitCalib &prior,
   train_dir_ = -1;
   work_.detail.rail_duty_used = 0.0f;
   clipped_[0] = clipped_[1] = false;
+  rail_start_ = 0;
   train_prog_sum_ = 0.0f;
   train_prog_n_ = 0;
   total_ticks_ = 0;
@@ -456,7 +457,22 @@ float Ident::tick_preflight(const IdentInputs &in) {
   const float sigma = buf_mad_sigma(med);
   const bool window = ic.supply_lo < ic.supply_hi;
   const float vm = supply_n_ > 0 ? supply_sum_ / static_cast<float>(supply_n_) : -1.0f;
-  if (med <= ic.adc_flat_max) {
+  // D23: parked inside an ADC clamp (sigma ~ 0 AT the clamp value) is a rail
+  // START, not yet a defect — I2 tries to escape first; a dead ADC never
+  // leaves the band and still FAILs (adc_flat / adc_rail) after the escape.
+  const bool at_hi = med >= ic.adc_clip_hi - ic.clip_tol_counts;
+  const bool at_lo = med <= ic.adc_clip_lo + ic.clip_tol_counts;
+  const bool clamp_start = !SIL_BUG(bug_, KR_RAILSTART_OFF) && (at_hi || at_lo) &&
+                           sigma <= ic.clip_sigma_max;
+  if (clamp_start) {
+    if (window && (vm < ic.supply_lo || vm > ic.supply_hi)) {
+      fail(IdentReason::SUPPLY);
+    } else {
+      rail_start_ = at_hi ? 1 : -1;
+      work_.detail.vm = vm;
+      enter(IdentState::I2_POLARITY);
+    }
+  } else if (med <= ic.adc_flat_max) {
     fail(IdentReason::ADC_FLAT);
   } else if (med >= ic.adc_full_scale - ic.adc_rail_margin) {
     fail(IdentReason::ADC_RAIL);
@@ -475,6 +491,41 @@ float Ident::tick_preflight(const IdentInputs &in) {
 
 float Ident::tick_polarity() {
   const IdentConfig &ic = *icfg_;
+  if (sub_ == S_INIT && rail_start_ != 0) {  // D23 escape from the clamp
+    const float want = p_med_ > 50.0f ? -1.0f : 1.0f;  // away from that end
+    probe_sign_ = want * static_cast<float>(ic.dir_sign_hint >= 0 ? 1 : -1);
+    esc_idx_ = 0;
+    esc_alt_ = 0;
+    sub_ = S_REPO;
+  }
+  if (sub_ == S_REPO) {  // D23: fire an escape probe
+    probe_ref_ = raw_med_;
+    const float duty = esc_idx_ >= ic.escape_full_from ? ic.escape_duty_max : ic.probe_duty;
+    pulse(probe_sign_ * duty, static_cast<int>(ic.escape_widths_ms[esc_idx_] + 0.5f),
+          ic.probe_rest_ms);
+    sub_ = S_MEDIAN;
+    return pulse_out();
+  }
+  if (sub_ == S_MEDIAN) {  // D23: did it leave the clamp band?
+    if (pulse_busy()) return pulse_out();
+    const float d = to_pct(raw_med_) - to_pct(probe_ref_);
+    if (!is_clipped(raw_med_) && std::fabs(d) >= ic.probe_motion_pct) {  // row 7
+      dir_sign_ = static_cast<int8_t>(sgn(d) * sgn(probe_sign_));
+      if (SIL_BUG(bug_, K3_DIR_FIXED)) dir_sign_ = 1;
+      enter(IdentState::I3_ENDPOINTS);
+      return 0.0f;
+    }
+    probe_sign_ = -probe_sign_;  // alternate; escalate after both signs
+    if (++esc_alt_ >= 2) {
+      esc_alt_ = 0;
+      if (++esc_idx_ >= IDENT_ESCAPE_WIDTHS) {  // never left the clamp: the
+        fail(rail_start_ > 0 ? IdentReason::ADC_RAIL : IdentReason::ADC_FLAT);
+        return 0.0f;  // preflight's reason, now after an honest escape try
+      }
+    }
+    sub_ = S_REPO;
+    return 0.0f;
+  }
   if (sub_ == S_INIT) {
     const float p = p_med_;
     if (p >= ic.mid_lo && p <= ic.mid_hi) {
