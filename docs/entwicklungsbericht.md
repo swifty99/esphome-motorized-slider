@@ -81,6 +81,7 @@ Worktree), Hardwarezeit nur seriell durch mich, jeder Flash nur mit Jans OK, jed
 |---|---|
 | Spec Küche, Controller, GLIDE, Auto-Ident | `docs/kueche-mief-spec.md`, `controller-spec.md`, `glide-mode-spec.md`, `auto-ident-spec.md` |
 | Messungen und Findings | `docs/findings/` (u. a. `kueche-hil-2026-11-07.md`, `ident-sil-2026-11-07.md`) und `docs/plant-model.md` |
+| Repo (Sicherung, öffentlich) | GitHub `swifty99/esphome-motorized-slider`, Branches `main` = `v2`; Push mit `git pushgh` (Alias nutzt das swifty99-Token, `kipp-ing` hat dort nur Lesezugriff) |
 | Komponente (Wrapper + Kern) | `firmware/components/slider_servo/` |
 | SIL und Tests | `sil/`, `analysis/tests/` |
 | Küche-Config und Betrieb | `EsphomeZoo/kueche_mief_ESP32.yaml`, `docs/kueche-mief-slider.md`, `docs/maintenance-log.md` |
