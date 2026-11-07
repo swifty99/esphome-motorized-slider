@@ -263,3 +263,47 @@ Migrationshinweise für Stufe 5:
 | `dbdba06` | Hub, Arbiter, ADC1-Besitz, optionaler Sync-Pin, NVS je Index, Dump-URIs, Thermal-Schema |
 | `f42b039` | Sensor-Plattform: position / wiper_voltage / adc |
 | `aca2a9f` | `kueche_mief_slider_compile.yaml`, Negativ-Kontrollen |
+
+## Nachtrag Stufe 0C — Anschluss an die Core-Ident-API
+
+Stand nach dem Merge von `stage0-core` (092a905).
+
+- **Tick:** Der Tick ruft `Servo::tick_raw(raw, supply_v, adc_err)` auf. Das
+  Ergebnis ist Motor-Duty, `dir_sign` wendet der Core selbst an.
+  - `invert_direction` wirkt nur noch als `dir_sign_hint` und als Vorzeichen
+    der nominalen Calib. Küche: `dunst` hat `invert_direction: true`
+    (Hardware-Befund).
+  - `supply_sensor` ist optional; ohne Angabe ist `supply_v` = −1.
+- **Ident:** `start_ident()` / `abort_ident()` gehen direkt an den Core. Der Ident
+  hält den Arbiter-Grant bis I0. Ein `set_target` während des Idents ergibt den
+  Status `ident läuft, befehl abgewiesen`.
+- **NVS:** Der Blob ist jetzt `IdentResult` (Magic `SVI1`, Version 2), der Key
+  bleibt `SVRC` + Index. Alte Blobs laden nicht, die Einheit gilt dann als
+  nicht identifiziert. Beim Boot prüft `adopt_ident()` den Stempel.
+  Geschrieben wird nur in `loop()`.
+- **Befund:** `Servo::init()` setzt `commit_seq` und das committed-Ergebnis
+  zurück. Der Wrapper hält deshalb eine eigene Commit-Zählung und eine
+  Seqlock-Kopie. Der Resync besteht aus `init` + `adopt_ident` +
+  `preload_thermal`; die 0,05-Thermal-Schwelle entfällt.
+- **Rig:** Ohne NVS-Ident fährt jetzt auch die Rig R8-gedrosselt
+  (`UnitCalib::identified` hat den Default `false`). Für den Bench gibt es
+  `assume_identified: true`. Die Rig-YAML ist bewusst unverändert, die
+  Entscheidung liegt beim Coordinator.
+- **RAM:** Der Core-Ident kostet je Instanz etwa 7 KB statisches DIRAM. Die
+  beiden Wrapper-Kopien liegen auf dem Heap (PSRAM).
+
+Größen nach dem Umbau:
+
+| Config | Flash | RAM |
+|---|---|---|
+| Küche | 825 638 B (45,0 %) | 141 016 B (82,0 %) |
+| Rig | 802 434 B (43,7 %) | 131 572 B (76,5 %) |
+
+**Offen:**
+- Der Service `slider_ident_report` (§6) fehlt; es gibt nur den Text-Sensor.
+- `supply_lo` / `supply_hi` sind nicht als YAML-Optionen herausgeführt.
+
+**Wünsche an den Core:**
+- `Servo::resync(raw)`, das committed-Ergebnis, `commit_seq` und EMA behält.
+- `IdentResult`/`Ident` speicherschonender: der Arbeitspuffer im PSRAM oder
+  extern übergeben.
