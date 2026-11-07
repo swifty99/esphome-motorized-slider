@@ -99,8 +99,6 @@ struct IdentDetail {
   float stall_motion_pct = 0.0f;
   float vm = -1.0f;                                   // stamped supply [V], <0 none
   float rail_duty_used = 0.0f;                        // I3 duty that reached the rails
-  uint8_t clipped[2] = {0, 0};                        // D22: rail A/B ADC-clipped
-  float clip_entry_raw[2] = {0.0f, 0.0f};             // last live reading before the clip
   uint32_t phase_ticks[IDENT_PHASES] = {};
   uint32_t total_ticks = 0;
 };
@@ -159,6 +157,10 @@ class Ident {
   void set_committed(const IdentResult &r) { committed_ = r; }
   // position estimate in % with the CURRENT scale (hint until I3, then rails)
   float pos_pct() const { return p_med_; }
+  // D22 diagnostics of the last run (kept OUT of IdentResult on purpose: the
+  // NVS blob layout of already-identified units stays valid)
+  bool rail_clipped(int leg) const { return clipped_[leg & 1]; }
+  float clip_entry_raw(int leg) const { return clip_entry_raw_[leg & 1]; }
 
  private:
   enum class Sub : uint8_t;
@@ -273,6 +275,8 @@ class Ident {
   int train_count_{0};
   int train_dir_{-1};        // -1 = toward A (0 %), +1 = toward B
   float raw_a_{0.0f}, raw_b_{0.0f}, sig_a_{0.0f}, sig_b_{0.0f};
+  bool clipped_[2] = {false, false};
+  float clip_entry_raw_[2] = {0.0f, 0.0f};
   bool leg_live_seen_{false};    // D22: this train saw unclipped samples
   bool leg_clip_seen_{false};
   float leg_last_live_raw_{0.0f};

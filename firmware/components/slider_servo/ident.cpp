@@ -153,6 +153,7 @@ bool Ident::start(bool ok_to_start, const UnitCalib &prior,
   quiet_hi_ = 0.0f;
   train_dir_ = -1;
   work_.detail.rail_duty_used = 0.0f;
+  clipped_[0] = clipped_[1] = false;
   train_prog_sum_ = 0.0f;
   train_prog_n_ = 0;
   total_ticks_ = 0;
@@ -586,8 +587,8 @@ float Ident::tick_endpoints() {
     const bool clipped = !SIL_BUG(bug_, KC_CLIP_REJECT) && is_clipped(med) &&
                          sig <= ic.clip_sigma_max && leg_live_seen_ && leg_clip_seen_;
     const int leg = train_dir_ < 0 ? 0 : 1;
-    work_.detail.clipped[leg] = clipped ? 1 : 0;
-    work_.detail.clip_entry_raw[leg] = clipped ? leg_clip_entry_raw_ : med;
+    clipped_[leg] = clipped;
+    clip_entry_raw_[leg] = clipped ? leg_clip_entry_raw_ : med;
     if (train_dir_ < 0) {
       raw_a_ = med;
       sig_a_ = sig;
@@ -605,8 +606,8 @@ float Ident::tick_endpoints() {
   const bool same_side = sgn(raw_b_ - raw_a_) != expect;
   // unclipped rails keep the sigma window (flat-0 / stuck ADC stays a FAIL);
   // a D22-clipped rail is valid with sigma ~ 0 by construction
-  const bool clip_a = work_.detail.clipped[0] != 0;
-  const bool clip_b = work_.detail.clipped[1] != 0;
+  const bool clip_a = clipped_[0];
+  const bool clip_b = clipped_[1];
   const bool sig_ok =
       (clip_a || (sig_a_ >= ic.sigma_min_counts && sig_a_ <= ic.sigma_max_counts)) &&
       (clip_b || (sig_b_ >= ic.sigma_min_counts && sig_b_ <= ic.sigma_max_counts));
@@ -635,11 +636,11 @@ float Ident::tick_endpoints() {
   // D22: targets never clamp into a clipped (dead) end — the usable span ends
   // the margin inside the last live reading of the train into that rail
   if (clip_a) {
-    const float lo = to_pct(work_.detail.clip_entry_raw[0]) + ic.span_margin_pct;
+    const float lo = to_pct(clip_entry_raw_[0]) + ic.span_margin_pct;
     if (lo > c.span_lo) c.span_lo = lo;
   }
   if (clip_b) {
-    const float hi = to_pct(work_.detail.clip_entry_raw[1]) - ic.span_margin_pct;
+    const float hi = to_pct(clip_entry_raw_[1]) - ic.span_margin_pct;
     if (hi < c.span_hi) c.span_hi = hi;
   }
   c.dir_sign = dir_sign_;

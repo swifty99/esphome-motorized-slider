@@ -605,7 +605,8 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
   std::printf("final_pos_frame=%.4f\n", frame(plant.p()));
   std::printf("clipped_a=%d\nclipped_b=%d\nclip_entry_a=%.2f\nclip_entry_b=%.2f\n"
               "span_lo=%.3f\nspan_hi=%.3f\ntruth_raw_cal0=%.2f\ntruth_raw_cal100=%.2f\n",
-              d.clipped[0], d.clipped[1], d.clip_entry_raw[0], d.clip_entry_raw[1], c.span_lo,
+              servo.ident().rail_clipped(0) ? 1 : 0, servo.ident().rail_clipped(1) ? 1 : 0,
+              servo.ident().clip_entry_raw(0), servo.ident().clip_entry_raw(1), c.span_lo,
               c.span_hi, rc0, rc100);
   return 0;
 }
