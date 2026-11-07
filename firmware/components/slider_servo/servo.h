@@ -88,6 +88,7 @@ class Servo {
   // politely, it yields via the persistent-interlock path (row 18, T14); an
   // ident yields via row 28.
   void set_abort(bool on) { safety_.set_abort(on); }
+  void preload_thermal(float ema) { safety_.preload_thermal(ema); }
 
   // ---- L6 Ident (kueche-mief-spec §3) ----
   // Row 1/2: accepted only from controller IDLE, no observer fault, and the

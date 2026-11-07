@@ -25,6 +25,10 @@ class Safety {
   }
 
   void set_abort(bool on) { abort_ = on; }
+  // Restore a (conservative) thermal state, e.g. after an unexpected reset the
+  // wrapper may assume the motor is still warm. Never lowers the budget's
+  // protection; also used by the SIL for the Ident row-4 'thermal' FAIL.
+  void preload_thermal(float ema) { ema_ = ema > ema_ ? ema : ema_; }
   bool clamped() const { return clamped_; }
   float thermal_avg() const { return ema_; }
   bool tripped() const { return tripped_; }

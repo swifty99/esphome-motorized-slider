@@ -13,6 +13,7 @@
 //   noise <k> | backlash <pct> | supply_scale <s> | fs_spread <rel>
 //   supply_adc <V_nom>     supply ADC present, reads V_nom * supply_scale
 //   supply_window <lo> <hi> | hint <raw0> <raw100> | dir_hint <+1|-1>
+//   fs_patch <lo> <hi> <fs> breakaway := fs on plant nodes in [lo, hi] %
 //   boot_nvs               adopt the synthetic previous NVS result at boot
 //   csv_every <n>          CSV decimation (default 1)
 //   at <t> <event...>
@@ -60,6 +61,7 @@ struct IScenario {
   int dir_hint = 1;
   bool boot_nvs = false;
   int csv_every = 1;
+  float patch_lo = -1.0f, patch_hi = -1.0f, patch_fs = 0.0f;  // tight spot
   std::vector<IEvent> events;
 };
 
@@ -97,6 +99,7 @@ bool parse(const char *path, IScenario &sc) {
     else if (tok == "dir_hint") ss >> sc.dir_hint;
     else if (tok == "boot_nvs") sc.boot_nvs = true;
     else if (tok == "csv_every") ss >> sc.csv_every;
+    else if (tok == "fs_patch") ss >> sc.patch_lo >> sc.patch_hi >> sc.patch_fs;
     else if (tok == "at" || tok == "on") {
       IEvent e;
       if (tok == "at") {
@@ -155,6 +158,9 @@ float truth_pulse(const TruthPlant &tp, float gain_abs, float x0, float pdir,
 
 struct Run {
   int start = -1, end = -1;
+  int enter[10] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+  IdentResult res;
+  int outcome = 0, reason = 0;
   float post_u_max = 0.0f;
   bool post_open = false;
 };
@@ -191,6 +197,11 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
   icfg.supply_hi = sc.win_hi;
 
   TruthPlant base = TruthPlant::from(nominal, sc.perturb);
+  if (sc.patch_hi > sc.patch_lo)  // a tight spot on the track (both directions)
+    for (int k = 0; k < STATIC_NODES; k++) {
+      const float x = 5.0f * static_cast<float>(k);
+      if (x >= sc.patch_lo && x <= sc.patch_hi) base.u.fs_fwd[k] = base.u.fs_rev[k] = sc.patch_fs;
+    }
   TruthPlant truth = base;
   scale_friction(truth, base, sc.var.friction_scale);
   float supply_scale = sc.var.supply_scale;
@@ -269,6 +280,10 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
   int grab_detect_post = -1;
   int ident_done_tick = -1;
   const int n_max = static_cast<int>(sc.duration_s * 1000.0f);
+  // fuzz bookkeeping (T15 pattern for L6): observed ident transitions, and
+  // the exclusivity invariants while a run is active
+  int trans[12][12] = {};
+  int ctrl_violation = 0, rej_during = 0, acc_during = 0, starts_during = 0;
 
   for (int i = 0; i < n_max; i++) {
     for (auto &e : sc.events) {
@@ -277,6 +292,7 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
       const std::string &k = e.args[0];
       auto arg = [&](size_t j) { return j < e.args.size() ? std::atof(e.args[j].c_str()) : 0.0; };
       if (k == "ident") {
+        if (servo.ident_active()) starts_during++;
         servo.start_ident(20260 + static_cast<uint32_t>(runs.size()), true);
       } else if (k == "abort_ident") {
         servo.abort_ident();
@@ -284,7 +300,9 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
         Move m;
         m.target = static_cast<float>(arg(1));
         const float v = (e.args.size() > 3 && e.args[2] == "speed") ? static_cast<float>(arg(3)) : 0.0f;
+        const bool during = servo.ident_active();
         m.status = static_cast<int>(servo.set_target(m.target, v));
+        if (during) (m.status != 0 ? rej_during : acc_during)++;
         m.issued = i;
         m.active = true;
         for (auto &o : moves) o.active = false;
@@ -314,11 +332,20 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
         else if (m == "rail") sensor.set_fault(RawSensor::Fault::RAIL);
         else if (m == "stuck") sensor.set_fault(RawSensor::Fault::STUCK, static_cast<float>(arg(2)));
         else sensor.set_fault(RawSensor::Fault::NONE);
+      } else if (k == "heat") {
+        servo.preload_thermal(static_cast<float>(arg(1)));
       } else if (k == "nan") {
         nan_next = true;
       }
     }
 
+    {  // commands act between ticks: observe their transition too (abort -> ABORT)
+      const IdentState is0 = servo.ident_state();
+      if (is0 == IdentState::ABORT && is0 != prev_is) {
+        trans[static_cast<int>(prev_is)][static_cast<int>(is0)]++;
+        prev_is = is0;
+      }
+    }
     const float supply_v = sc.supply_nom > 0.0f ? sc.supply_nom * supply_scale : -1.0f;
     float raw = sensor.sample_raw(plant.p(), u_motor);
     if (nan_next) {
@@ -343,7 +370,9 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
 
     // ident bookkeeping
     const IdentState is = servo.ident_state();
+    if (servo.ident_active() && servo.controller().state() != State::IDENT) ctrl_violation++;
     if (is != prev_is) {
+      trans[static_cast<int>(prev_is)][static_cast<int>(is)]++;
       if (prev_is == IdentState::I0_OFF && servo.ident_active()) {
         Run r;
         r.start = i;
@@ -351,11 +380,17 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
         for (auto &o : runs) o.post_open = false;
       }
       const int id = static_cast<int>(is);
-      if (id >= 1 && id <= 9) trigger(id, i);
+      if (id >= 1 && id <= 9) {
+        trigger(id, i);
+        if (!runs.empty()) runs.back().enter[id] = i;
+      }
       if (is == IdentState::I0_OFF && !runs.empty()) {
         Run &r = runs.back();
         r.end = i;
         r.post_open = true;
+        r.res = servo.ident().work();
+        r.outcome = static_cast<int>(servo.ident_outcome());
+        r.reason = static_cast<int>(servo.ident_fail_reason());
         const IdentOutcome oc = servo.ident_outcome();
         if (oc == IdentOutcome::OK) {
           trigger(10, i);
@@ -482,9 +517,28 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
     }
   for (int ph = 1; ph <= 9; ph++) std::printf("phase_ticks_%d=%u\n", ph, d.phase_ticks[ph]);
   std::printf("total_ticks=%u\n", d.total_ticks);
-  for (size_t k = 0; k < runs.size(); k++)
-    std::printf("run%zu_start=%d\nrun%zu_end=%d\nrun%zu_post_u_max=%.4f\n", k + 1,
-                runs[k].start, k + 1, runs[k].end, k + 1, runs[k].post_u_max);
+  for (size_t k = 0; k < runs.size(); k++) {
+    const Run &r = runs[k];
+    const size_t q = k + 1;
+    std::printf("run%zu_start=%d\nrun%zu_end=%d\nrun%zu_post_u_max=%.4f\n", q, r.start, q,
+                r.end, q, r.post_u_max);
+    std::printf("run%zu_outcome=%s\nrun%zu_reason=%s\n", q, OUTCOME_NAMES[r.outcome], q,
+                ident_reason_name(static_cast<IdentReason>(r.reason)));
+    for (int ph = 1; ph <= 9; ph++) std::printf("run%zu_enter_%d=%d\n", q, ph, r.enter[ph]);
+    const IdentDetail &rd = r.res.detail;
+    const UnitCalib &rc = r.res.calib;
+    std::printf("run%zu_fs_p95=%.4f\nrun%zu_b_fwd=%.6e\nrun%zu_b_rev=%.6e\n", q, rd.fs_p95,
+                q, rc.b_fwd, q, rc.b_rev);
+    std::printf("run%zu_impulse_duty=%.4f\nrun%zu_total_ticks=%u\n", q, rc.impulse_duty, q,
+                rd.total_ticks);
+    for (int dir = 0; dir < 2; dir++) {
+      for (int p = 0; p < IDENT_POSITIONS; p++)
+        std::printf("run%zu_fs_%s_%d=%.4f\n", q, dir == 0 ? "fwd" : "rev", p, rd.fs[dir][p]);
+      for (int w = 0; w < IDENT_IMP_WIDTHS; w++)
+        std::printf("run%zu_imp_%s_%d=%.4f\n", q, dir == 0 ? "fwd" : "rev", w,
+                    rd.imp_table[dir][w]);
+    }
+  }
   std::printf("moves=%d\n", static_cast<int>(moves.size()));
   for (size_t k = 0; k < moves.size(); k++) {
     Move &m = moves[k];
@@ -496,6 +550,12 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
                 k + 1, m.flag.c_str(), k + 1, m.pulse_u_max, k + 1, m.u_max, k + 1,
                 m.move_ticks, k + 1, m.status);
   }
+  std::printf("ident_transitions=");
+  for (int a = 0; a < 12; a++)
+    for (int b = 0; b < 12; b++)
+      if (trans[a][b]) std::printf("%d>%d:%d,", a, b, trans[a][b]);
+  std::printf("\nctrl_violation=%d\nrejected_during=%d\naccepted_during=%d\n"
+              "starts_during=%d\n", ctrl_violation, rej_during, acc_during, starts_during);
   std::printf("grab_detect_post=%d\nident_done_tick=%d\n", grab_detect_post, ident_done_tick);
   std::printf("final_identified=%d\nfinal_derived=%d\n", servo.calib().identified ? 1 : 0,
               servo.calib().derived ? 1 : 0);
