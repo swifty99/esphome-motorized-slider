@@ -68,6 +68,35 @@ struct UnitCalib {
   // targets clamp into this span in L4/L5; no L1 positional torque clamp)
   float span_lo = 4.0f;   // %
   float span_hi = 96.0f;  // %
+
+  // --- kueche-mief-spec §5 / R6–R8 (filled by Ident L6; defaults = rig) ---
+  // R6: duty sign -> position direction. +1: positive motor duty raises the
+  // calibrated position. Servo::tick_raw() multiplies the core's output by it;
+  // Servo::tick(z_pct) (legacy % path) never reads it.
+  int8_t dir_sign = 1;
+  // endpoint calibration in raw ADC counts (rig: 8000 @ 0 %, 100 @ 100 %, the
+  // SensorSim / plant-model constants). Used by Servo::tick_raw() only.
+  float raw_at_0 = 8000.0f;
+  float raw_at_100 = 100.0f;
+  // R7 per-unit derivations. Read by the controller ONLY when derived == true;
+  // otherwise ServoConfig's impulse_duty / u_max / v_min_cmd apply (the old
+  // constants — SIL byte-identical, pattern of commit e28f965).
+  bool derived = false;
+  float impulse_duty = 0.8f;   // R7a clamp(F_s_p95 + 0.10, 0.60, 0.95)
+  float u_max = 0.9f;          // R7b clamp(F_s_p95 + 0.15, impulse_duty, 1.0)
+  float v_min_cmd = 120.0f;    // R7c from the measured flight law (Ident I7)
+  // R8: false = no valid NVS ident -> throttled mode (impulse path only, no
+  // MOVE cruise, small widths, status flag every tick). Default false because
+  // a fresh unit IS unidentified; the SIL runner sets it explicitly to true
+  // for the legacy suite (the nominal map is the rig's identified snapshot).
+  bool identified = false;
+  // Ident by-products the core does not consume (stored for the report /
+  // plantreport cross-check, §5): per-direction kinetic level + damping.
+  float fk_mid_fwd = 0.55f;
+  float fk_mid_rev = 0.55f;
+  float b_fwd = 5.47e-04f;
+  float b_rev = 5.47e-04f;
+  float spike_rate = 0.0f;     // fraction of PWM ticks beyond 5 sigma0 (I6)
 };
 
 // ---------------------------------------------------------------------------
@@ -205,6 +234,22 @@ struct ServoConfig {
                                   // single forward seat (nail first shot, no
                                   // judder — gate Q3). 0 => crawl_land_zone/
                                   // endgame_zone. Stage 2 adds the learned coast.
+
+  // R8 unidentified mode (kueche-mief-spec §2 R8: "nur Endgame-/Impuls-Pfad mit
+  // kleinen Breiten, kein MOVE-Cruise"). Active iff UnitCalib::identified ==
+  // false. Every move — any distance, any speed request — runs the endgame
+  // pulse path (rows 2/14/15) with widths capped; rows 3/13/26 (MOVE / CRAWL /
+  // GLIDE entry) are suppressed.
+  float unid_max_width_ms = 10.0f;  // "kleine Breiten": nominal table 10 ms =
+                                    // 2.6 % (< endgame_zone 3.5 %); on a
+                                    // breakaway-0.43 unit ~3x that, still a
+                                    // bounded hop the endgame re-measures
+  int unid_impulse_max = 60;        // pulse budget (row 11) in unidentified mode:
+                                    // a 0->100 % move at ~2 % per capped pulse
+                                    // needs ~50; bounded so T9 still holds
+  float unid_rate = 8.0f;           // %/s watchdog pacing (row 19) for the pulse
+                                    // path: 10 ms pulse 2.6 % per 130 ms ~ 20 %/s
+                                    // nominal, /2.5 margin for slower units
 
   // watchdog (row 19): 2 x expected move time + 1 s; expected includes endgame
   float watchdog_endgame_s = 1.5f;

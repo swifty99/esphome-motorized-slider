@@ -30,6 +30,15 @@ enum class SeededBug : int {
   T17_NO_DRAG_CHECK = 17,    // CRAWL ratchet-error override check dropped
   G1_NO_KEEPROLL = 18,       // GLIDE uses a long settle -> re-sticks between kicks
   G2_GLIDE_HOLD = 19,        // inter-kick hold duty during GLIDE (breaks T16/G-T2)
+  // kueche-mief-spec §4 (Ident L6 / R7 / R8)
+  K2_BRACKET_RIG = 20,       // bracket starts at 0.60, I6 stall fixed 0.45
+  K3_DIR_FIXED = 21,         // dir_sign fixed +1 (polarity never learned)
+  K4_EARLY_COMMIT = 22,      // result published (NVS) before I9
+  K5_NO_HAND = 23,           // row 27 (hand at duty 0) deleted
+  K7_RIG_DUTY = 24,          // R7 derivation replaced by fixed 0.8 / 0.9
+  K8_UNID_FLAG_CLEAR = 25,   // "nicht identifiziert" flag cleared after first move
+  K9_SINGLE_PROBE = 26,      // averaging replaced by a single probe
+  KF_ROGUE_IDENT = 27,       // undocumented transition: CMD Ident in I5 restarts I1
 };
 
 #ifdef SLIDER_SIL_BUGS

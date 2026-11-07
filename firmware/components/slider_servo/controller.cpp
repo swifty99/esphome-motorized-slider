@@ -28,11 +28,38 @@ void Controller::init(const UnitCalib *calib, const ServoConfig *cfg, float p0,
   t_ = 0;
   log_ = ControllerLog{};
   settle_flag_ = SettleFlag::NONE;
+  cmd_status_ = CmdStatus::ACCEPTED;
+  had_settle_ = false;
+  unid_flag_ = unid();
+}
+
+void Controller::enter_ident() {
+  state_ = State::IDENT;
+  watchdog_left_ = -1;
+  has_target_ = false;
+  pending_ = false;
+  ilk_ticks_ = 0;
+}
+
+void Controller::exit_ident(float p_hat) {
+  state_ = State::IDLE;
+  release_reason_ = ReleaseReason::NONE;
+  hold_ = p_hat;
+  has_hold_ = true;
+  settle_flag_ = SettleFlag::NONE;
+  adopt_ticks_ = 0;
+  watchdog_left_ = -1;
+  unid_flag_ = unid();
 }
 
 // --------------------------------------------------------------- commands --
 
 void Controller::set_target(float target, float p_hat, float v_req) {
+  if (state_ == State::IDENT) {  // L6 owns the motor: reject, never queue
+    cmd_status_ = CmdStatus::REJECTED_IDENT;
+    return;
+  }
+  cmd_status_ = CmdStatus::ACCEPTED;
   const float clamped = clipf(target, calib_->span_lo, calib_->span_hi);
   const bool was_clamped = clamped != target;
 
@@ -54,7 +81,8 @@ void Controller::set_target(float target, float p_hat, float v_req) {
 
   // normalize the speed request (spec §5: gap rounds up to a fast move)
   v_req_ = 0.0f;
-  if (v_req > 0.0f && v_req <= cfg_->v_crawl_max)
+  // R8: unidentified -> no CRAWL/GLIDE either (pulse path only)
+  if (!unid() && v_req > 0.0f && v_req <= cfg_->v_crawl_max)
     v_req_ = clipf(v_req, 0.5f, cfg_->v_crawl_max);
 
   arm_watchdog(std::fabs(target_ - p_hat));
@@ -70,7 +98,8 @@ void Controller::set_target(float target, float p_hat, float v_req) {
     settle(p_hat, SettleFlag::REACHED);
     return;
   }
-  if (std::fabs(err) <= cfg_->endgame_zone) {  // row 2: impulse-only move
+  if (std::fabs(err) <= cfg_->endgame_zone || unid()) {
+    // row 2: impulse-only move (R8: every move when unidentified)
     p_at_pulse_valid_ = false;
     nomove_pulses_ = 0;
     enter_wait(1);
@@ -107,6 +136,8 @@ void Controller::declare_grab() {
 
 float Controller::tick(float p_hat, float v_hat) {
   t_++;
+  if (!SIL_BUG(bug_, K8_UNID_FLAG_CLEAR) || !had_settle_) unid_flag_ = unid();
+  else unid_flag_ = false;  // the dishonest status (K8 negative control)
   if (state_ != State::IDLE && state_ != State::RELEASED &&
       watchdog_left_ >= 0 && !SIL_BUG(bug_, T9_NO_WATCHDOG)) {
     if (--watchdog_left_ <= 0) {  // row 19
@@ -132,6 +163,8 @@ float Controller::tick(float p_hat, float v_hat) {
       return tick_crawl(p_hat);
     case State::GLIDE:
       return tick_glide(p_hat);
+    case State::IDENT:
+      return 0.0f;  // L6 drives the motor; the controller is silent
   }
   return 0.0f;
 }
@@ -206,7 +239,7 @@ float Controller::tick_move(float p_hat, float v_hat) {
   }
 
   // velocity schedule with the cliff floor (§4 forbidden #3): never creep
-  const float v_floor = SIL_BUG(bug_, T2_LOW_VMIN) ? 30.0f : cfg.v_min_cmd;
+  const float v_floor = SIL_BUG(bug_, T2_LOW_VMIN) ? 30.0f : v_min_eff();
   float v_mag = std::sqrt(2.0f * cfg.a_traj * remaining);
   const float v_des = d * clipf(v_mag, v_floor, cfg.v_cruise);
   last_v_des_ = v_des;
@@ -249,12 +282,13 @@ float Controller::tick_move(float p_hat, float v_hat) {
 
   const float u_raw = ff_dir * f_ff + ucal.b * v_des + ucal.m * a_des +
                       cfg.kp * e_p + cfg.kd * (v_des - v_hat);
-  float u = clipf(u_raw, -cfg.u_max, cfg.u_max);
+  const float umax = u_max_eff();
+  float u = clipf(u_raw, -umax, umax);
   if (SIL_BUG(bug_, T11_KICK_UNCAPPED) && kick_ > 0.0f) u = u_raw;
 
   // grab by torque saturation (row 7): full torque + zero progress cannot be
   // friction (worst measured breakaway incl. spread ~0.80 < u_max 0.9)
-  if (stalled && std::fabs(u_raw) >= cfg.u_max) {
+  if (stalled && std::fabs(u_raw) >= umax) {
     sat_ticks_++;
     if (sat_ticks_ >= cfg.grab_sat_ms && !SIL_BUG(bug_, T9_NO_WATCHDOG)) {
       declare_grab();
@@ -288,8 +322,8 @@ float Controller::tick_pulse() {
     // impulse_duty
     const float duty = (pulse_origin_ == State::CRAWL ||
                         pulse_origin_ == State::GLIDE)
-                           ? cfg_->crawl_impulse_duty
-                           : cfg_->impulse_duty;
+                           ? crawl_duty_eff()
+                           : impulse_duty_eff();
     return duty * static_cast<float>(pulse_dir_);
   }
   // row 16: width elapsed — back to the origin state, settle timer running
@@ -332,6 +366,7 @@ void Controller::settle(float p_hat, SettleFlag flag) {
   watchdog_left_ = -1;
   has_target_ = false;
   crawl_landing_ = false;
+  had_settle_ = true;
   if (log_.settled_tick < 0) log_.settled_tick = t_;
 }
 
@@ -397,7 +432,10 @@ void Controller::restart_motion(float p_hat) {
 }
 
 void Controller::start_pulse(float width_ms, int dir, State origin, float p_hat) {
-  float w = clipf(width_ms, cfg_->pulse_min_ms, cfg_->pulse_max_ms);
+  // R8: unidentified -> small widths only (endgame pulses; CRAWL/GLIDE are
+  // never entered in that mode)
+  const float wmax = unid() ? cfg_->unid_max_width_ms : cfg_->pulse_max_ms;
+  float w = clipf(width_ms, cfg_->pulse_min_ms, wmax);
   if (SIL_BUG(bug_, T10_LONG_PULSE)) w = 200.0f;
   pulse_left_ = static_cast<int>(w + 0.5f);
   last_width_ms_ = pulse_left_;
@@ -442,7 +480,8 @@ void Controller::endgame_decide(float p_hat) {
     start_pulse(cfg.pulse_min_ms, +1, State::WAIT, p_hat);
     return;
   }
-  if (endgame_pulses_ >= cfg.impulse_max || log_.removes > cfg.remove_max) {  // row 11
+  const int pulse_budget = unid() ? cfg.unid_impulse_max : cfg.impulse_max;
+  if (endgame_pulses_ >= pulse_budget || log_.removes > cfg.remove_max) {  // row 11
     if (SIL_BUG(bug_, T8_CLEAR_GAVE_UP)) {
       settle(p_hat, SettleFlag::REACHED);  // the dishonest latch (T8 negative)
       return;
@@ -451,7 +490,7 @@ void Controller::endgame_decide(float p_hat) {
     settle(p_hat, SettleFlag::GAVE_UP);
     return;
   }
-  if (std::fabs(err) > cfg.endgame_zone + 2.0f) {  // row 13: full re-approach
+  if (std::fabs(err) > cfg.endgame_zone + 2.0f && !unid()) {  // row 13 (not in R8)
     log_.removes++;
     restart_motion(p_hat);
     return;
@@ -728,7 +767,8 @@ float Controller::tick_glide(float p_hat) {
 // ---------------------------------------------------------------- helpers --
 
 void Controller::arm_watchdog(float distance) {
-  const float rate = v_req_ > 0.0f ? v_req_ : cfg_->v_cruise;
+  const float rate =
+      v_req_ > 0.0f ? v_req_ : (unid() ? cfg_->unid_rate : cfg_->v_cruise);
   const float expected_s = distance / rate + cfg_->watchdog_endgame_s;
   watchdog_left_ =
       static_cast<int32_t>((2.0f * expected_s + 1.0f) * FS_HZ);  // row 19
