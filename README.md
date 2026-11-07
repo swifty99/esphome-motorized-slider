@@ -8,7 +8,7 @@ motor, pot feedback, strong stiction) on ESP32-S2/S3 with ESPHome.
 | Version | Where | Status |
 |---|---|---|
 | v1 (2025, hand-written) | `components/motorized_slider`, tag `v1-legacy`, [README-v1](README-v1.md) | Works, but chatters at the target. Why: [docs/legacy-analysis.md](docs/legacy-analysis.md) |
-| v2 (2026, clean-room) | `firmware/components/slider_servo` | Measurement-driven rewrite. SIL gate green, first HIL stage measured on the rig, not yet deployed in the field |
+| v2 (2026, clean-room) | `firmware/components/slider_servo` | Measurement-driven rewrite. Running in the field since 2026-11-07 (kueche_mief, two sliders): self-identification on the device, position set from Home Assistant, landing error ~0.15 % median. SIL: 194 tests green. Report: [docs/entwicklungsbericht.md](docs/entwicklungsbericht.md) |
 
 Use v2 in your ESPHome config (full example: [firmware/slider_lab_rig.yaml](firmware/slider_lab_rig.yaml)):
 
@@ -45,7 +45,7 @@ v1 was used for hardware facts and constants only, never for control flow.
 
 ```
 docs/            plans, specs, protocols, findings
-firmware/        slider_lab (Phase 1), later slider_servo (Phase 5)
+firmware/        slider_servo (the component), slider_lab (measurement firmware)
 analysis/        Python: loaders, identification fits, plant simulator, controller sim
 data/            recorded runs (lab CSV + picoscope exports), committed selectively
 ```
