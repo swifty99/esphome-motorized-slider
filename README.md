@@ -1,14 +1,33 @@
-# motorslider — clean-room servo controller for a motorized audio fader
+# Motorized Slider for ESPHome
 
-Clean-room redesign of the motorized-slider controller (ALPS RS60N11M9 class fader,
-belt-driven DC motor, pot feedback, ESP32-S2/S3). The old ESPHome component in
-`EsphomeZoo/components/motorized_slider` is **reference material only** — nothing has
-to stay. Goal: genuinely smooth, silent, precise motion despite dominant stiction,
-noisy feedback, and belt backlash.
+Position control for a motorized audio fader (ALPS RS60N11M9 class: belt-driven DC
+motor, pot feedback, strong stiction) on ESP32-S2/S3 with ESPHome.
 
-This is run as a measurement-driven project ("masterclass" style): every control
-decision is backed by an identified plant parameter or a recorded experiment, and
-every invariant becomes a falsifiable tripwire test before hardware sees the code.
+## Two versions
+
+| Version | Where | Status |
+|---|---|---|
+| v1 (2025, hand-written) | `components/motorized_slider`, tag `v1-legacy`, [README-v1](README-v1.md) | Works, but chatters at the target. Why: [docs/legacy-analysis.md](docs/legacy-analysis.md) |
+| v2 (2026, clean-room) | `firmware/components/slider_servo` | Measurement-driven rewrite. SIL gate green, first HIL stage measured on the rig, not yet deployed in the field |
+
+Use v2 in your ESPHome config (full example: [firmware/slider_lab_rig.yaml](firmware/slider_lab_rig.yaml)):
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/swifty99/esphome-motorized-slider
+      ref: main
+      path: firmware/components
+    components: [slider_servo]
+```
+
+## How v2 was built
+
+Every control decision is backed by an identified plant parameter or a recorded
+experiment (PicoScope + lab firmware `slider_lab`), and every invariant became a
+falsifiable tripwire test in software-in-the-loop before hardware saw the code.
+v1 was used for hardware facts and constants only, never for control flow.
 
 ## Documents
 
