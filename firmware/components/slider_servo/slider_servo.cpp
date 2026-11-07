@@ -49,7 +49,7 @@ constexpr int kDumpSendTimeoutS = 3;
 constexpr int64_t kDumpSessionCapUs = 60LL * 1000000;
 constexpr int kHttpdStack = 12288;
 constexpr int kHttpdMaxSockets = 3;   // dumps are single-client; leave lwIP sockets to api/ota/udp
-constexpr int kTickTaskStack = 4096;
+constexpr int kTickTaskStack = 8192;  // was 4096: ident code + adc driver; HWM exposed as 'Slider Tick Stack frei'
 constexpr UBaseType_t kTickTaskPrio = 24;  // above WiFi (23) — esp_timer lost against WiFi (lab lesson)
 // Shared-ADC window: the main task starts an extra-channel conversion only if
 // the next tick is at least this far away (one oneshot read is a few tens of
@@ -142,6 +142,7 @@ void SliderServo::abort_ident() {
 
 uint16_t SliderServo::get_last_tick_us() const { return this->hub_->get_last_tick_us(); }
 uint32_t SliderServo::get_missed_ticks() const { return this->hub_->get_missed_ticks(); }
+uint32_t SliderServo::get_tick_stack_free() const { return this->hub_->get_tick_stack_free(); }
 uint16_t SliderServo::get_tick_p99_us() const { return this->hub_->get_tick_p99_us(); }
 uint32_t SliderServo::get_adc_error_total() const { return this->hub_->get_adc_error_total(); }
 uint32_t SliderServo::get_adc_contention() const { return this->hub_->get_adc_contention(); }
@@ -905,7 +906,7 @@ esp_err_t SliderServo::handle_dump_(httpd_req_t *req) {
                      "# fw: esphome %s, built %s %s\n"
                      "# tick_us_nominal: 1000\n"
                      "# adc: bits=13 atten=DB_12 samples=4  endpoints: raw%ld=0%% raw%ld=100%%\n"
-                     "# records: %u capacity: %u storage: %s  missed_ticks: %u  adc_errors: %u\n"
+                     "# records: %u capacity: %u storage: %s  missed_ticks: %u  adc_errors: %u  tick_stack_free: %u\n"
                      "# state: 0=idle 1=move 2=brake 3=pulse 4=wait 5=crawl 6=released 7=glide 8=ident\n"
                      "# settle: 0=none 1=reached 2=gave_up 3=adopted\n"
                      "# release: 0=none 1=grab 2=interlock 3=watchdog 4=fault 5=command\n"
@@ -915,7 +916,8 @@ esp_err_t SliderServo::handle_dump_(httpd_req_t *req) {
                      __TIME__, (long) lrintf(this->servo_.calib().raw_at_0),
                      (long) lrintf(this->servo_.calib().raw_at_100), (unsigned) count,
                      (unsigned) this->capacity_, this->buf_in_psram_ ? "psram" : "internal",
-                     (unsigned) this->hub_->get_missed_ticks(), (unsigned) this->adc_err_count_.load());
+                     (unsigned) this->hub_->get_missed_ticks(), (unsigned) this->adc_err_count_.load(),
+                     (unsigned) this->hub_->get_tick_stack_free());
   esp_err_t err = httpd_resp_send_chunk(req, buf, len);
 
   if (err == ESP_OK) {

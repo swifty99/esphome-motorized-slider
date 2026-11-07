@@ -215,6 +215,7 @@ class SliderServo : public Component {
   // hub-wide tick health (one shared tick serves all instances)
   uint16_t get_last_tick_us() const;
   uint32_t get_missed_ticks() const;
+  uint32_t get_tick_stack_free() const;  // bytes, high-water mark of the tick task stack
   uint16_t get_tick_p99_us() const;
   uint32_t get_adc_error_total() const;   // all wipers + extra channels (hub)
   uint32_t get_adc_contention() const;    // ticks that held a sample (shared ADC busy)
@@ -450,6 +451,9 @@ class SliderServoHub {
   uint16_t get_tick_p99_us() const;
   uint16_t get_last_tick_us() const { return this->last_tick_us_.load(); }
   uint32_t get_missed_ticks() const { return this->missed_ticks_.load(); }
+  uint32_t get_tick_stack_free() const {
+    return this->tick_task_ != nullptr ? (uint32_t) uxTaskGetStackHighWaterMark(this->tick_task_) : 0;
+  }
   uint32_t get_adc_contention() const { return this->adc_contention_.load(); }
   uint32_t get_queue_overflows() const { return this->queue_overflows_.load(); }
   uint32_t get_shared_read_errors() const { return this->shared_read_errors_.load(); }
