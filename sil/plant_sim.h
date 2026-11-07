@@ -62,6 +62,8 @@ struct PlantVariant {
   float supply_scale = 1.0f;    // VM / VM_nom: effective drive x (±15 %)
   float fs_spread = 0.0f;       // relative sigma of the breakaway per stick
                                 // event (rig trial spread ±0.04 ~ 2 sigma)
+  float clip_hi = 8191.0f;      // ADC clamps: a wiper beyond reads exactly the
+  float clip_lo = 0.0f;         // clamp (sigma -> 0), Küche Slider 2 2026-11-07
 };
 
 // friction-scaled copy of a truth plant (scenario variants / runtime events)
@@ -262,6 +264,13 @@ class RawSensor {
     return r0 + x * (r100 - r0) / 100.0f;
   }
   float wiper_x() const { return xs_; }
+  // noise-free reading at x incl. the ADC clamps (truth for the calibrated %)
+  float clean_clipped(float x) const {
+    float r = raw_at_x(x);
+    if (r < v_.clip_lo) r = v_.clip_lo;
+    if (r > v_.clip_hi) r = v_.clip_hi;
+    return r;
+  }
 
   float sample_raw(float x, float duty) {
     // backlash: the wiper follows the carriage only beyond half the play
@@ -284,8 +293,8 @@ class RawSensor {
       case Fault::STUCK: raw = stuck_val_; break;
       default: break;
     }
-    if (raw < 0.0f) raw = 0.0f;
-    if (raw > FULL_SCALE) raw = FULL_SCALE;
+    if (raw < v_.clip_lo) raw = v_.clip_lo;
+    if (raw > v_.clip_hi) raw = v_.clip_hi;
     return std::round(raw * 4.0f) / 4.0f;
   }
 

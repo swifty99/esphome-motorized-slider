@@ -553,3 +553,70 @@ def test_set_target_rejected_during_ident(tmp_path):
                      trace=True)
     assert s["move1_status"] == 1  # CmdStatus::REJECTED_IDENT
     assert s["run1_outcome"] == "ok"  # and the ident is undisturbed
+
+
+# ------------------------------------------- D22: ADC-clipped rails (Küche)
+# Küche Slider 2 (2026-11-07): the wiper saturates the 13-bit ADC at a rail
+# (raw 8191, sigma 0) -> the old sigma window failed I3 with `span`. A
+# clipped rail reached from the live range is the spec's sensor dead band
+# (controller-spec Gate answer 8): valid, raw_at := clamp, the usable span
+# ends span_margin inside the last live reading. Negative control: bug 28
+# restores the old sigma window. A flat-0 ADC still FAILs without a stamp.
+
+KC_CLIP_REJECT = 28
+CLIP_BASE = "hint 500 8150\npot_inv 0\ndir_hint -1\n"  # Küche dunst_slider-like
+CLIP_CASES = {
+    "hi": "pot_raw 500 8300\nadc_clip_hi 8191",
+    "lo": "pot_raw -300 7800",
+    "both": "pot_raw -300 8400",
+    "hi_pol_noise3": "pot_raw 500 8300\nadc_clip_hi 8191\nmotor_pol -1\nnoise 3",
+}
+CLIP_MOVES = ("on DONE 1.0 target 30\non DONE 4.0 target 70\n"
+              "on DONE 7.0 target 99\non DONE 10.0 target 1\n")
+
+
+def chk_clip(s, name):
+    if s["run1_outcome"] != "ok":
+        return False, f"{name}: {s['run1_outcome']}/{s['run1_reason']}"
+    want_a = name in ("lo", "both")
+    want_b = name != "lo"
+    if (s["clipped_a"] == 1) != want_a or (s["clipped_b"] == 1) != want_b:
+        return False, f"{name}: clipped flags {s['clipped_a']}/{s['clipped_b']}"
+    # raw_at := the clamp on the clipped side, the live rail elsewhere
+    if want_b and s["raw_at_100"] != 8191.0:
+        return False, f"raw_at_100 {s['raw_at_100']}"
+    if want_a and s["raw_at_0"] != 0.0:
+        return False, f"raw_at_0 {s['raw_at_0']}"
+    for k in range(1, int(s["moves"]) + 1):
+        tgt = s[f"move{k}_ctl_target"]
+        fin = s[f"move{k}_final_cal"]
+        if not (s["span_lo"] - 1e-3 <= tgt <= s["span_hi"] + 1e-3):
+            return False, f"move {k}: target {tgt} outside the usable span"
+        if abs(fin - tgt) > LAND_TOL:
+            return False, f"move {k}: {tgt:.2f} -> {fin:.2f}"
+    return True, "ok"
+
+
+@pytest.mark.parametrize("name", list(CLIP_CASES))
+def test_d22_clipped_rails_identify_and_land(tmp_path, name):
+    sc = sc_ident(CLIP_BASE + CLIP_CASES[name], extra=CLIP_MOVES)
+    s, _ = run_ident(tmp_path, sc, tag=f"clip_{name}")
+    ok, msg = chk_clip(s, name)
+    assert ok, f"positive: {msg}"
+    assert s["total_ticks"] <= BUDGET_TICKS
+    # targets 99 / 1 clamp to the usable span, never into the dead end
+    assert s["span_hi"] < 100.0 - 3.9 and s["span_lo"] > 3.9
+    sb, _ = run_ident(tmp_path, sc, bug=KC_CLIP_REJECT, tag=f"clipb_{name}")
+    ok_bad, _ = chk_clip(sb, name)
+    assert not ok_bad, f"D22 negative control vacuous ({name})"
+    assert sb["run1_reason"] == "span"  # the field failure, reproduced
+
+
+@pytest.mark.parametrize("extra", ["on I3 0 adc flat\n", "on I3 3 adc flat\n",
+                                   "at 0.0 adc flat\n"])
+def test_d22_flat_zero_adc_still_fails(tmp_path, extra):
+    s, _ = run_ident(tmp_path, sc_ident(extra=extra), tag="flat")
+    assert s["run1_outcome"] == "failed", s["run1_outcome"]
+    assert s["run1_reason"] in ("span", "adc_flat")
+    assert s["nvs_writes"] == 0 and s["nvs_hash_start"] == s["nvs_hash_end"]
+    assert s["run1_post_u_max"] == 0.0

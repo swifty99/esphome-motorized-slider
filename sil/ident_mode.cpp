@@ -13,6 +13,7 @@
 //   noise <k> | backlash <pct> | supply_scale <s> | fs_spread <rel>
 //   supply_adc <V_nom>     supply ADC present, reads V_nom * supply_scale
 //   supply_window <lo> <hi> | hint <raw0> <raw100> | dir_hint <+1|-1>
+//   adc_clip_hi <raw> | adc_clip_lo <raw>   ADC clamps (plant AND IdentConfig)
 //   fs_patch <lo> <hi> <fs> breakaway := fs on plant nodes in [lo, hi] %
 //   boot_nvs               adopt the synthetic previous NVS result at boot
 //   csv_every <n>          CSV decimation (default 1)
@@ -93,6 +94,8 @@ bool parse(const char *path, IScenario &sc) {
     else if (tok == "backlash") ss >> sc.var.backlash;
     else if (tok == "supply_scale") ss >> sc.var.supply_scale;
     else if (tok == "fs_spread") ss >> sc.var.fs_spread;
+    else if (tok == "adc_clip_hi") ss >> sc.var.clip_hi;
+    else if (tok == "adc_clip_lo") ss >> sc.var.clip_lo;
     else if (tok == "supply_adc") ss >> sc.supply_nom;
     else if (tok == "supply_window") ss >> sc.win_lo >> sc.win_hi;
     else if (tok == "hint") ss >> sc.hint0 >> sc.hint100;
@@ -169,6 +172,8 @@ struct Move {
   float target = 0.0f;
   int issued = -1, settled = -1;
   float final_frame = -1.0f;
+  float final_cal = -1.0f;
+  float ctl_target = -1.0f;
   float pulse_u_max = 0.0f;
   float u_max = 0.0f;
   int move_ticks = 0;
@@ -195,6 +200,8 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
   icfg.dir_sign_hint = static_cast<int8_t>(sc.dir_hint >= 0 ? 1 : -1);
   icfg.supply_lo = sc.win_lo;
   icfg.supply_hi = sc.win_hi;
+  icfg.adc_clip_hi = sc.var.clip_hi;  // the ident knows its ADC's clamps
+  icfg.adc_clip_lo = sc.var.clip_lo;
 
   TruthPlant base = TruthPlant::from(nominal, sc.perturb);
   if (sc.patch_hi > sc.patch_lo)  // a tight spot on the track (both directions)
@@ -216,6 +223,11 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
   const float r_x0 = sensor.raw_at_x(0.0f), r_x100 = sensor.raw_at_x(100.0f);
   const bool frame_same = ((sc.hint100 - sc.hint0) > 0) == ((r_x100 - r_x0) > 0);
   auto frame = [&](float x) { return frame_same ? x : 100.0f - x; };
+  // truth in the CALIBRATED scale: fraction of the measurable (clamped) wiper
+  // range, 0 % at the hint-0 rail; equals frame() when nothing clips
+  const float rc0 = sensor.clean_clipped(frame_same ? 0.0f : 100.0f);
+  const float rc100 = sensor.clean_clipped(frame_same ? 100.0f : 0.0f);
+  auto cal = [&](float x) { return (sensor.clean_clipped(x) - rc0) / (rc100 - rc0) * 100.0f; };
 
   // synthetic previous NVS stamp (K4 must find it bit-identical after a FAIL)
   IdentResult nvs;
@@ -421,6 +433,8 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
       if (m.left_idle && c.state() == State::IDLE && m.settled < 0) {
         m.settled = i;
         m.final_frame = frame(plant.p());
+        m.final_cal = cal(plant.p());
+        m.ctl_target = c.target();
         m.flag = FLAG_NAMES[static_cast<int>(c.settle_flag())];
       }
     }
@@ -542,7 +556,13 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
   std::printf("moves=%d\n", static_cast<int>(moves.size()));
   for (size_t k = 0; k < moves.size(); k++) {
     Move &m = moves[k];
-    if (m.settled < 0) m.final_frame = frame(plant.p());
+    if (m.settled < 0) {
+      m.final_frame = frame(plant.p());
+      m.final_cal = cal(plant.p());
+      m.ctl_target = servo.controller().target();
+    }
+    std::printf("move%zu_final_cal=%.4f\nmove%zu_ctl_target=%.4f\n", k + 1, m.final_cal,
+                k + 1, m.ctl_target);
     std::printf("move%zu_target=%.3f\nmove%zu_final=%.4f\nmove%zu_settled=%d\n"
                 "move%zu_issued=%d\nmove%zu_flag=%s\nmove%zu_pulse_u_max=%.4f\n"
                 "move%zu_u_max=%.4f\nmove%zu_move_ticks=%d\nmove%zu_status=%d\n",
@@ -560,5 +580,9 @@ int run_ident_mode(const char *path, const char *out_path, int bug) {
   std::printf("final_identified=%d\nfinal_derived=%d\n", servo.calib().identified ? 1 : 0,
               servo.calib().derived ? 1 : 0);
   std::printf("final_pos_frame=%.4f\n", frame(plant.p()));
+  std::printf("clipped_a=%d\nclipped_b=%d\nclip_entry_a=%.2f\nclip_entry_b=%.2f\n"
+              "span_lo=%.3f\nspan_hi=%.3f\ntruth_raw_cal0=%.2f\ntruth_raw_cal100=%.2f\n",
+              d.clipped[0], d.clipped[1], d.clip_entry_raw[0], d.clip_entry_raw[1], c.span_lo,
+              c.span_hi, rc0, rc100);
   return 0;
 }
